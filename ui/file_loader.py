@@ -2,13 +2,65 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+_ENCODINGS = ["utf-8", "latin-1", "cp1252", "utf-16", "ascii"]
+_DELIMITERS = {"Comma (,)": ",", "Tab (\\t)": "\t", "Semicolon (;)": ";", "Pipe (|)": "|"}
+_ENGINES = ["C", "Python"]
+
+
+class FileOptionsDialog(tk.Toplevel):
+    """Per-file load options: encoding, delimiter, engine."""
+
+    def __init__(self, parent, filename):
+        super().__init__(parent)
+        self.title(f"Load Options — {filename}")
+        self.resizable(False, False)
+        self.grab_set()
+        self.result = None  # set to dict on OK, stays None on cancel
+
+        ttk.Label(self, text=f"Options for:  {filename}",
+                  font=("TkDefaultFont", 10, "bold")).pack(padx=14, pady=(12, 8))
+
+        grid = ttk.Frame(self)
+        grid.pack(padx=14, pady=4)
+
+        ttk.Label(grid, text="Encoding:").grid(row=0, column=0, sticky=tk.W, pady=4)
+        self._enc_var = tk.StringVar(value="utf-8")
+        ttk.Combobox(grid, textvariable=self._enc_var, values=_ENCODINGS,
+                     state="readonly", width=16).grid(row=0, column=1, padx=8)
+
+        ttk.Label(grid, text="Delimiter:").grid(row=1, column=0, sticky=tk.W, pady=4)
+        self._delim_var = tk.StringVar(value="Comma (,)")
+        ttk.Combobox(grid, textvariable=self._delim_var, values=list(_DELIMITERS.keys()),
+                     state="readonly", width=16).grid(row=1, column=1, padx=8)
+
+        ttk.Label(grid, text="Engine:").grid(row=2, column=0, sticky=tk.W, pady=4)
+        self._engine_var = tk.StringVar(value="C")
+        ttk.Combobox(grid, textvariable=self._engine_var, values=_ENGINES,
+                     state="readonly", width=16).grid(row=2, column=1, padx=8)
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(pady=12)
+        ttk.Button(btn_row, text="Load", command=self._ok).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side=tk.LEFT)
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.wait_window()
+
+    def _ok(self):
+        self.result = {
+            "encoding": self._enc_var.get(),
+            "delimiter": _DELIMITERS[self._delim_var.get()],
+            "engine": self._engine_var.get(),
+        }
+        self.destroy()
+
 
 class FileLoaderFrame(ttk.Frame):
     def __init__(self, parent, db, on_loaded, **kwargs):
         super().__init__(parent, **kwargs)
         self.db = db
         self.on_loaded = on_loaded
-        self._loaded_files = {}  # name -> path
+        self._loaded_files = {}  # name -> {path, encoding, delimiter, engine}
 
         top = ttk.Frame(self)
         top.pack(fill=tk.X, padx=10, pady=10)
@@ -20,7 +72,7 @@ class FileLoaderFrame(ttk.Frame):
 
         list_frame = ttk.LabelFrame(self, text="Loaded Files")
         list_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
-        self._file_list = tk.Listbox(list_frame, height=4, selectmode=tk.SINGLE)
+        self._file_list = tk.Listbox(list_frame, height=4, selectmode=tk.SINGLE, exportselection=False)
         self._file_list.pack(fill=tk.X, padx=6, pady=6)
 
         self._preview_nb = ttk.Notebook(self)
@@ -33,18 +85,28 @@ class FileLoaderFrame(ttk.Frame):
         )
         for path in paths:
             name = os.path.splitext(os.path.basename(path))[0]
-            # Make table name safe for DuckDB
             safe_name = "".join(c if c.isalnum() else "_" for c in name)
             if safe_name in self._loaded_files:
                 messagebox.showwarning("Duplicate", f"A table named '{safe_name}' is already loaded.")
                 continue
+
+            dlg = FileOptionsDialog(self, os.path.basename(path))
+            if dlg.result is None:
+                continue  # user cancelled
+
+            opts = dlg.result
             try:
-                self.db.register_csv(safe_name, path)
-                self._loaded_files[safe_name] = path
-                self._file_list.insert(tk.END, f"{safe_name}  ({path})")
+                self.db.register_csv(safe_name, path, **opts)
+                self._loaded_files[safe_name] = {"path": path, **opts}
+                delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
+                self._file_list.insert(
+                    tk.END,
+                    f"{safe_name}  [enc={opts['encoding']}, delim={delim_display}, engine={opts['engine']}]"
+                )
                 self._add_preview_tab(safe_name)
             except Exception as exc:
                 messagebox.showerror("Load Error", f"Failed to load {path}:\n{exc}")
+
         self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)
 
     def _remove_selected(self):
@@ -53,10 +115,9 @@ class FileLoaderFrame(ttk.Frame):
             return
         idx = sel[0]
         entry = self._file_list.get(idx)
-        name = entry.split("  (")[0]
+        name = entry.split("  [")[0]
         self._file_list.delete(idx)
         self._loaded_files.pop(name, None)
-        # Remove preview tab
         for tab_id in self._preview_nb.tabs():
             if self._preview_nb.tab(tab_id, "text") == name:
                 self._preview_nb.forget(tab_id)
@@ -75,7 +136,8 @@ class FileLoaderFrame(ttk.Frame):
         tree = ttk.Treeview(frame, columns=cols, show="headings", height=12)
         for col in cols:
             tree.heading(col, text=col)
-            tree.column(col, width=120, stretch=True)
+            col_px = max(len(col) * 9, 80)
+            tree.column(col, width=col_px, minwidth=col_px, stretch=False)
         for row in rows:
             tree.insert("", tk.END, values=[str(v) if v is not None else "" for v in row])
 

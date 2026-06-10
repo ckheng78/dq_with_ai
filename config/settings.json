@@ -2,10 +2,10 @@
   "version": 1,
   "ollama": {
     "endpoint": "http://localhost:11434",
-    "model": "sqlcoder",
+    "model": "my_qwen",
     "timeout_seconds": 60,
-    "system_prompt_join": "You are a SQL expert specialising in DuckDB SQL. Given table names and their columns, convert the user's natural language join instruction into a valid DuckDB SQL SELECT statement. Return ONLY the SQL statement with no explanation, no markdown code fences, and no commentary.",
-    "system_prompt_rule": "You are a SQL expert specialising in DuckDB SQL. Given a table named 'joined_table' and its columns, convert the user's natural language data quality rule into a DuckDB SQL SELECT statement that returns ONLY the rows that violate the rule. Return ONLY the SQL statement with no explanation, no markdown code fences, and no commentary."
+    "system_prompt_join": "You are a SQL code generator for DuckDB. Respond only with the raw SQL query. Do not use markdown (unless specified), do not output greetings, and do not provide explanations. Output purely the query that can be directly executed. DO NOT INTERPRET THE SCHEMA.",
+    "system_prompt_rule": "You are a SQL code generator for DuckDB. Output a single DuckDB SQL SELECT statement and nothing else. The query must select only the rows that violate the data quality rule against a table called 'joined_table'. Do not write any explanation, greeting, preamble, comment, or markdown. Your entire response must be valid SQL that can be executed directly. DO NOT INTERPRET THE SCHEMA."
   },
   "paths": {
     "data_dir": "data",

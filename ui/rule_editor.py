@@ -15,7 +15,7 @@ class RuleEditorFrame(ttk.Frame):
         left.pack(side=tk.LEFT, fill=tk.BOTH, padx=(10, 4), pady=10, expand=False)
         left.config(width=220)
 
-        self._rule_list = tk.Listbox(left, width=26, selectmode=tk.SINGLE)
+        self._rule_list = tk.Listbox(left, width=26, selectmode=tk.SINGLE, exportselection=False)
         self._rule_list.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self._rule_list.bind("<<ListboxSelect>>", self._on_select)
 
@@ -40,6 +40,15 @@ class RuleEditorFrame(ttk.Frame):
         self._progress = ttk.Progressbar(btn_row, mode="indeterminate", length=100)
         self._progress.pack(side=tk.LEFT, padx=4)
 
+        fields_lf = ttk.LabelFrame(right, text="Available fields (joined_table)")
+        fields_lf.pack(fill=tk.X, pady=(4, 0))
+        self._field_list = tk.Listbox(fields_lf, height=5, selectmode=tk.SINGLE,
+                                       exportselection=False, font=("Courier", 9))
+        fields_vsb = ttk.Scrollbar(fields_lf, orient=tk.VERTICAL, command=self._field_list.yview)
+        self._field_list.configure(yscrollcommand=fields_vsb.set)
+        self._field_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
+        fields_vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=4, padx=(0, 4))
+
         ttk.Label(right, text="Generated SQL (review before running):").pack(anchor=tk.W, pady=(4, 2))
         self._sql_box = tk.Text(right, height=4, wrap=tk.WORD, state=tk.DISABLED, background="#f0f0f0")
         self._sql_box.pack(fill=tk.X)
@@ -55,6 +64,11 @@ class RuleEditorFrame(ttk.Frame):
         self._run_progress.pack(side=tk.LEFT, padx=8)
         self._next_btn = ttk.Button(action_row, text="Next: Reports →", command=self._proceed, state=tk.DISABLED)
         self._next_btn.pack(side=tk.RIGHT)
+
+    def set_fields(self, columns: list[str]):
+        self._field_list.delete(0, tk.END)
+        for col in columns:
+            self._field_list.insert(tk.END, col)
 
     def load_rules(self, rules: list[dict]):
         self._rules = [dict(r) for r in rules]
@@ -134,7 +148,7 @@ class RuleEditorFrame(ttk.Frame):
                 sql = self.llm.translate_rule(nl, col_hints)
                 self.after(0, lambda: self._show_sql(sql))
             except Exception as exc:
-                self.after(0, lambda: self._on_error(str(exc)))
+                self.after(0, lambda e=exc: self._on_error(str(e)))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -183,7 +197,7 @@ class RuleEditorFrame(ttk.Frame):
                 results = run_all_rules(runnable, self.db)
                 self.after(0, lambda: self._on_results(results))
             except Exception as exc:
-                self.after(0, lambda: self._on_error(f"Rule execution failed:\n{exc}"))
+                self.after(0, lambda e=exc: self._on_error(f"Rule execution failed:\n{e}"))
 
         threading.Thread(target=worker, daemon=True).start()
 

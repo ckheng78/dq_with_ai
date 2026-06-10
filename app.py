@@ -33,7 +33,7 @@ class App(tk.Tk):
         self._nb.pack(fill=tk.BOTH, expand=True)
 
         self._file_loader = FileLoaderFrame(self._nb, self._db, self._on_files_loaded)
-        self._join_editor = JoinEditorFrame(self._nb, self._db, self._llm, self._on_joined)
+        self._join_editor = JoinEditorFrame(self._nb, self._db, self._on_joined)
         self._rule_editor = RuleEditorFrame(self._nb, self._db, self._llm, self._on_rules_run)
         self._report_viewer = ReportViewerFrame(self._nb, self._db, self._restart)
 
@@ -117,6 +117,10 @@ class App(tk.Tk):
     def _on_joined(self, join_config: dict):
         self._nb.tab(2, state="normal")
         self._nb.select(2)
+        try:
+            self._rule_editor.set_fields(self._db.get_columns("joined_table"))
+        except Exception:
+            pass
         if messagebox.askyesno("Save Join Rules?", "Would you like to save this join rule for future use?"):
             path = join_store.save(join_config, self._paths["joins_dir"])
             messagebox.showinfo("Saved", f"Join rule saved to:\n{path}")

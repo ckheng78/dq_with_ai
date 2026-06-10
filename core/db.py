@@ -1,5 +1,39 @@
 import duckdb
-import os
+
+
+_DATE_DETECT_SAMPLE = 200
+_DATE_DETECT_THRESHOLD = 0.8  # 80% of non-empty values must parse as DATE
+
+
+def _csv_opts(encoding: str, delimiter: str, engine: str) -> str:
+    delim_sql = "\\t" if delimiter == "\t" else delimiter.replace("'", "''")
+    ignore_errors = "true" if engine == "Python" else "false"
+    return (
+        f"header=true, all_varchar=true, "
+        f"encoding='{encoding}', delim='{delim_sql}', ignore_errors={ignore_errors}"
+    )
+
+
+def _detect_date_columns(con, safe_path: str, columns: list[str], opts: str) -> set[str]:
+    date_cols = set()
+    for col in columns:
+        row = con.execute(f"""
+            SELECT
+                COUNT(*) FILTER (WHERE TRY_CAST("{col}" AS DATE) IS NOT NULL) AS hits,
+                COUNT(*) FILTER (WHERE "{col}" IS NOT NULL AND TRIM("{col}") != '') AS non_empty
+            FROM (
+                SELECT "{col}"
+                FROM read_csv_auto('{safe_path}', {opts})
+                LIMIT {_DATE_DETECT_SAMPLE}
+            )
+        """).fetchone()
+        hits, non_empty = row
+        if non_empty > 0 and hits / non_empty >= _DATE_DETECT_THRESHOLD:
+            date_cols.add(col)
+            print(f"[DB] '{col}' detected as DATE ({hits}/{non_empty} samples matched)")
+        else:
+            print(f"[DB] '{col}' kept as VARCHAR ({hits}/{non_empty} samples matched date)")
+    return date_cols
 
 
 class Database:
@@ -7,11 +41,34 @@ class Database:
         self.con = duckdb.connect(database=":memory:")
         self._registered_tables = []
 
-    def register_csv(self, name: str, path: str):
+    def register_csv(self, name: str, path: str, *,
+                     encoding: str = "utf-8", delimiter: str = ",", engine: str = "C"):
         safe_path = path.replace("\\", "/")
+        opts = _csv_opts(encoding, delimiter, engine)
+
+        columns = [
+            row[0] for row in self.con.execute(
+                f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
+            ).fetchall()
+        ]
+        print(f"[DB] Registering '{name}': {len(columns)} columns (enc={encoding}, delim={delimiter!r}, engine={engine})")
+        date_cols = _detect_date_columns(self.con, safe_path, columns, opts)
+
+        select_parts = []
+        for col in columns:
+            alias = f"{name}_{col}"
+            if col in date_cols:
+                select_parts.append(f'TRY_CAST("{col}" AS DATE) AS "{alias}"')
+            else:
+                select_parts.append(f'"{col}" AS "{alias}"')
+
         self.con.execute(
-            f"CREATE OR REPLACE VIEW \"{name}\" AS SELECT * FROM read_csv_auto('{safe_path}', header=true)"
+            f'CREATE OR REPLACE VIEW "{name}" AS '
+            f'SELECT {", ".join(select_parts)} '
+            f"FROM read_csv_auto('{safe_path}', {opts})"
         )
+
+        print(f"[DB] '{name}' ready. Date columns: {sorted(date_cols) or 'none'}")
         if name not in self._registered_tables:
             self._registered_tables.append(name)
 
