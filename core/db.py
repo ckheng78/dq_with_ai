@@ -40,8 +40,10 @@ class Database:
     def __init__(self):
         self.con = duckdb.connect(database=":memory:")
         self._registered_tables: list[str] = []
-        self._table_base_sql: dict[str, str] = {}  # original SELECT SQL before pre-join filters
-        self._join_base_sql: str = ""               # original JOIN SQL before post-join filters
+        self._table_base_sql: dict[str, str] = {}
+        self._join_base_sql: str = ""
+        self._join_filter_conditions: list[str] = []
+        self._join_derived_exprs: list[tuple[str, str]] = []
 
     def get_csv_columns(self, path: str, *,
                         encoding: str = "utf-8", delimiter: str = ",", engine: str = "C") -> list[str]:
@@ -204,23 +206,40 @@ class Database:
         return None
 
     def apply_join_filters(self, filters: list[dict]):
-        """Rebuild joined_table view with WHERE clauses from active post-join filters."""
-        if not self._join_base_sql:
-            return
-        conditions = [
+        """Store post-join filter conditions and rebuild joined_table."""
+        self._join_filter_conditions = [
             c for f in filters
             if (c := self._build_filter_condition(f)) is not None
         ]
-        if conditions:
-            where = " AND ".join(conditions)
-            sql = f"SELECT * FROM ({self._join_base_sql}) WHERE {where}"
+        self._rebuild_joined_table()
+
+    def apply_derived_fields(self, derived: list[dict]):
+        """Store derived field expressions and rebuild joined_table."""
+        self._join_derived_exprs = [
+            (d["name"], d["expression"]) for d in derived
+            if d.get("name") and d.get("expression")
+        ]
+        self._rebuild_joined_table()
+
+    def _rebuild_joined_table(self):
+        """Rebuild joined_table view from base SQL, applying filters then derived fields."""
+        if not self._join_base_sql:
+            return
+        sql = self._join_base_sql
+        if self._join_filter_conditions:
+            where = " AND ".join(self._join_filter_conditions)
+            sql = f"SELECT * FROM ({sql}) WHERE {where}"
             print(f"[POST-JOIN FILTER] WHERE {where}")
-        else:
-            sql = self._join_base_sql
+        if self._join_derived_exprs:
+            extra = ", ".join(f'{expr} AS "{name}"' for name, expr in self._join_derived_exprs)
+            sql = f"SELECT *, {extra} FROM ({sql})"
+            print(f"[DERIVED] {[name for name, _ in self._join_derived_exprs]}")
         self.con.execute(f"CREATE OR REPLACE VIEW joined_table AS {sql}")
 
     def execute_join(self, sql: str):
         self._join_base_sql = sql
+        self._join_filter_conditions = []
+        self._join_derived_exprs = []
         self.con.execute(f"CREATE OR REPLACE VIEW joined_table AS {sql}")
 
     def get_joined_preview(self, n: int = 100) -> tuple[list[str], list[tuple]]:

@@ -138,7 +138,7 @@ class FileLoaderFrame(ttk.Frame):
 
         ttk.Button(top, text="Add CSV File(s)", command=self._pick_files).pack(side=tk.LEFT)
         ttk.Button(top, text="Remove Selected", command=self._remove_selected).pack(side=tk.LEFT, padx=6)
-        self._next_btn = ttk.Button(top, text="Next: Define Join →", command=self._proceed, state=tk.DISABLED)
+        self._next_btn = ttk.Button(top, text="Next: Pre-Join Filters →", command=self._proceed, state=tk.DISABLED)
         self._next_btn.pack(side=tk.RIGHT)
 
         list_frame = ttk.LabelFrame(self, text="Loaded Files")

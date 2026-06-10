@@ -196,7 +196,7 @@ class PostJoinFilterFrame(ttk.Frame):
         top.pack(fill=tk.X, padx=10, pady=8)
         ttk.Label(top, text="Optional filters applied to the joined table before running rules.").pack(
             side=tk.LEFT)
-        self._next_btn = ttk.Button(top, text="Next: Define Rules →",
+        self._next_btn = ttk.Button(top, text="Next: Derived Fields →",
                                     command=self._apply_and_proceed, state=tk.DISABLED)
         self._next_btn.pack(side=tk.RIGHT)
 

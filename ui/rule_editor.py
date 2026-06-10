@@ -70,7 +70,8 @@ class RuleEditorFrame(ttk.Frame):
         fields_vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=4, padx=(0, 4))
 
         ttk.Label(right, text="Generated SQL (review before running):").pack(anchor=tk.W, pady=(4, 2))
-        self._sql_box = tk.Text(right, height=4, wrap=tk.WORD, state=tk.DISABLED, background="#f0f0f0")
+        self._sql_box = tk.Text(right, height=4, wrap=tk.WORD, background="#f0f0f0", foreground="black")
+        self._sql_box.bind("<Key>", lambda e: "break")  # read-only without disabling rendering
         self._sql_box.pack(fill=tk.X)
 
         self._save_rule_btn = ttk.Button(right, text="Save SQL to Rule", command=self._save_sql_to_rule, state=tk.DISABLED)
@@ -83,12 +84,42 @@ class RuleEditorFrame(ttk.Frame):
         self._run_progress = ttk.Progressbar(action_row, mode="indeterminate", length=120)
         self._run_progress.pack(side=tk.LEFT, padx=8)
 
+        preview_lf = ttk.LabelFrame(right, text="Preview of joined table (first 100 rows)")
+        preview_lf.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        pf = ttk.Frame(preview_lf)
+        pf.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self._preview_tree = ttk.Treeview(pf, show="headings", height=6)
+        pvsb = ttk.Scrollbar(pf, orient=tk.VERTICAL, command=self._preview_tree.yview)
+        phsb = ttk.Scrollbar(pf, orient=tk.HORIZONTAL, command=self._preview_tree.xview)
+        self._preview_tree.configure(yscrollcommand=pvsb.set, xscrollcommand=phsb.set)
+        self._preview_tree.grid(row=0, column=0, sticky="nsew")
+        pvsb.grid(row=0, column=1, sticky="ns")
+        phsb.grid(row=1, column=0, sticky="ew")
+        pf.rowconfigure(0, weight=1)
+        pf.columnconfigure(0, weight=1)
+
     def set_fields(self, columns: list[str], table_names: list[str] = None):
         self._all_fields = list(columns)
         choices = ["All tables"] + (table_names or [])
         self._table_filter_cb["values"] = choices
         self._table_filter_var.set("All tables")
         self._apply_field_filter()
+        self._refresh_preview()
+
+    def _refresh_preview(self):
+        try:
+            cols, rows = self.db.get_preview("joined_table")
+        except Exception:
+            return
+        self._preview_tree.config(columns=cols)
+        for col in cols:
+            self._preview_tree.heading(col, text=col)
+            col_px = max(len(col) * 9, 80)
+            self._preview_tree.column(col, width=col_px, minwidth=col_px, stretch=False)
+        for item in self._preview_tree.get_children():
+            self._preview_tree.delete(item)
+        for row in rows:
+            self._preview_tree.insert("", tk.END, values=[str(v) if v is not None else "" for v in row])
 
     def _apply_field_filter(self):
         sel = self._table_filter_var.get()
@@ -135,22 +166,20 @@ class RuleEditorFrame(ttk.Frame):
             return
         idx = sel[0]
         rule = self._rules[idx]
-        for widget in (self._nl_input, self._sql_box):
-            widget.config(state=tk.NORMAL)
+        self._nl_input.config(state=tk.NORMAL)
         self._nl_input.delete("1.0", tk.END)
         self._nl_input.insert("1.0", rule.get("nl_description", ""))
         self._sql_box.delete("1.0", tk.END)
         self._sql_box.insert("1.0", rule.get("sql", ""))
-        self._sql_box.config(state=tk.DISABLED)
         self._translate_btn.config(state=tk.NORMAL)
         self._regen_btn.config(state=tk.NORMAL)
         self._save_rule_btn.config(state=tk.NORMAL if rule.get("sql") else tk.DISABLED)
 
     def _clear_editor(self):
-        for widget in (self._nl_input, self._sql_box):
-            widget.config(state=tk.NORMAL)
-            widget.delete("1.0", tk.END)
-            widget.config(state=tk.DISABLED)
+        self._nl_input.config(state=tk.NORMAL)
+        self._nl_input.delete("1.0", tk.END)
+        self._nl_input.config(state=tk.DISABLED)
+        self._sql_box.delete("1.0", tk.END)
         self._translate_btn.config(state=tk.DISABLED)
         self._regen_btn.config(state=tk.DISABLED)
         self._save_rule_btn.config(state=tk.DISABLED)
@@ -170,21 +199,32 @@ class RuleEditorFrame(ttk.Frame):
         self._translate_btn.config(state=tk.DISABLED)
 
         def worker():
-            try:
-                col_hints = self.db.get_columns("joined_table")
-                sql = self.llm.translate_rule(nl, col_hints)
-                self.after(0, lambda: self._show_sql(sql))
-            except Exception as exc:
-                self.after(0, lambda e=exc: self._on_error(str(e)))
+            import time
+            max_tries = 5
+            for attempt in range(1, max_tries + 1):
+                try:
+                    col_hints = self.db.get_columns("joined_table")
+                    sql = self.llm.translate_rule(nl, col_hints)
+                except Exception as exc:
+                    self.after(0, lambda e=exc: self._on_error(str(e)))
+                    return
+                if sql.strip().upper().startswith("SELECT"):
+                    self.after(0, lambda s=sql: self._show_sql(s))
+                    return
+                print(f"[LLM] Attempt {attempt}/{max_tries}: SQL does not start with SELECT — got: {sql[:120]!r}")
+                if attempt < max_tries:
+                    time.sleep(5)
+            self.after(0, lambda: self._on_error(
+                f"LLM failed to produce a valid SELECT statement after {max_tries} attempts.\n"
+                "Please rephrase your rule description and try again."
+            ))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_sql(self, sql: str):
         self._progress.stop()
-        self._sql_box.config(state=tk.NORMAL)
         self._sql_box.delete("1.0", tk.END)
         self._sql_box.insert("1.0", sql)
-        self._sql_box.config(state=tk.DISABLED)
         self._translate_btn.config(state=tk.NORMAL)
         self._save_rule_btn.config(state=tk.NORMAL)
 

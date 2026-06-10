@@ -11,6 +11,7 @@ import persistence.rule_store as rule_store
 from ui.file_loader import FileLoaderFrame
 from ui.filter_editor import FilterEditorFrame, PostJoinFilterFrame
 from ui.join_editor import JoinEditorFrame
+from ui.derived_fields_editor import DerivedFieldsEditorFrame
 from ui.rule_editor import RuleEditorFrame
 from ui.report_viewer import ReportViewerFrame
 
@@ -33,21 +34,23 @@ class App(tk.Tk):
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill=tk.BOTH, expand=True)
 
-        self._file_loader         = FileLoaderFrame(self._nb, self._db, self._on_files_loaded)
-        self._filter_editor       = FilterEditorFrame(self._nb, self._db, self._on_filters_applied)
-        self._join_editor         = JoinEditorFrame(self._nb, self._db, self._on_joined)
-        self._postjoin_filter_editor = PostJoinFilterFrame(self._nb, self._db, self._on_postjoin_filtered)
-        self._rule_editor         = RuleEditorFrame(self._nb, self._db, self._llm, self._on_rules_run)
-        self._report_viewer       = ReportViewerFrame(self._nb, self._db, self._restart)
+        self._file_loader              = FileLoaderFrame(self._nb, self._db, self._on_files_loaded)
+        self._filter_editor            = FilterEditorFrame(self._nb, self._db, self._on_filters_applied)
+        self._join_editor              = JoinEditorFrame(self._nb, self._db, self._on_joined)
+        self._postjoin_filter_editor   = PostJoinFilterFrame(self._nb, self._db, self._on_postjoin_filtered)
+        self._derived_fields_editor    = DerivedFieldsEditorFrame(self._nb, self._db, self._on_derived_fields_applied)
+        self._rule_editor              = RuleEditorFrame(self._nb, self._db, self._llm, self._on_rules_run)
+        self._report_viewer            = ReportViewerFrame(self._nb, self._db, self._restart)
 
         self._nb.add(self._file_loader,            text="1. Load Files")
         self._nb.add(self._filter_editor,          text="2. Pre-Join Filters")
         self._nb.add(self._join_editor,            text="3. Define Join")
         self._nb.add(self._postjoin_filter_editor, text="4. Post-Join Filters")
-        self._nb.add(self._rule_editor,            text="5. Define Rules")
-        self._nb.add(self._report_viewer,          text="6. Reports")
+        self._nb.add(self._derived_fields_editor,  text="5. Derived Fields")
+        self._nb.add(self._rule_editor,            text="6. Define Rules")
+        self._nb.add(self._report_viewer,          text="7. Reports")
 
-        for i in range(1, 6):
+        for i in range(1, 7):
             self._nb.tab(i, state="disabled")
 
         self.after(200, self._check_recurring)
@@ -133,8 +136,13 @@ class App(tk.Tk):
             messagebox.showinfo("Saved", f"Join rule saved to:\n{path}")
 
     def _on_postjoin_filtered(self, _filters: list[dict]):
+        self._derived_fields_editor.set_columns(self._db.get_columns("joined_table"))
         self._nb.tab(4, state="normal")
         self._nb.select(4)
+
+    def _on_derived_fields_applied(self, _derived: list[dict]):
+        self._nb.tab(5, state="normal")
+        self._nb.select(5)
         try:
             self._rule_editor.set_fields(
                 self._db.get_columns("joined_table"),
@@ -158,8 +166,8 @@ class App(tk.Tk):
                 reporter.generate_detail(r, self._max_detail_rows, reports_dir, self._templates_dir)
                 for r in results
             ]
-            self._nb.tab(5, state="normal")
-            self._nb.select(5)
+            self._nb.tab(6, state="normal")
+            self._nb.select(6)
             self._report_viewer.set_reports(summary_path, detail_paths)
         except Exception as exc:
             messagebox.showerror("Report Error", str(exc))
@@ -170,9 +178,10 @@ class App(tk.Tk):
         self._filter_editor.db = self._db
         self._join_editor.db = self._db
         self._postjoin_filter_editor.db = self._db
+        self._derived_fields_editor.db = self._db
         self._rule_editor.db = self._db
         self._report_viewer.db = self._db
-        for i in range(1, 6):
+        for i in range(1, 7):
             self._nb.tab(i, state="disabled")
         self._nb.tab(0, state="normal")
         self._nb.select(0)

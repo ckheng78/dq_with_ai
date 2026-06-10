@@ -129,7 +129,7 @@ class JoinEditorFrame(ttk.Frame):
                                         state="readonly", width=30)
         self._master_cb.pack(side=tk.LEFT, padx=6)
         self._master_var.trace_add("write", lambda *_: self._rebuild_rules())
-        self._next_btn = ttk.Button(top, text="Next: Define Rules →",
+        self._next_btn = ttk.Button(top, text="Next: Post-Join Filters →",
                                      command=self._proceed, state=tk.DISABLED)
         self._next_btn.pack(side=tk.RIGHT)
 
