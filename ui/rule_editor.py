@@ -10,6 +10,7 @@ class RuleEditorFrame(ttk.Frame):
         self.llm = llm
         self.on_rules_run = on_rules_run
         self._rules = []  # list of {name, nl_description, sql}
+        self._all_fields: list[str] = []
 
         left = ttk.LabelFrame(self, text="Rules")
         left.pack(side=tk.LEFT, fill=tk.BOTH, padx=(10, 4), pady=10, expand=False)
@@ -27,6 +28,12 @@ class RuleEditorFrame(ttk.Frame):
         right = ttk.Frame(self)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 10), pady=10)
 
+        top_bar = ttk.Frame(right)
+        top_bar.pack(fill=tk.X, pady=(0, 4))
+        self._next_btn = ttk.Button(top_bar, text="Next: Reports →",
+                                     command=self._proceed, state=tk.DISABLED)
+        self._next_btn.pack(side=tk.RIGHT)
+
         ttk.Label(right, text="Rule description (plain English):").pack(anchor=tk.W)
         self._nl_input = tk.Text(right, height=3, wrap=tk.WORD, state=tk.DISABLED)
         self._nl_input.pack(fill=tk.X)
@@ -42,9 +49,22 @@ class RuleEditorFrame(ttk.Frame):
 
         fields_lf = ttk.LabelFrame(right, text="Available fields (joined_table)")
         fields_lf.pack(fill=tk.X, pady=(4, 0))
-        self._field_list = tk.Listbox(fields_lf, height=5, selectmode=tk.SINGLE,
-                                       exportselection=False, font=("Courier", 9))
-        fields_vsb = ttk.Scrollbar(fields_lf, orient=tk.VERTICAL, command=self._field_list.yview)
+
+        filter_row = ttk.Frame(fields_lf)
+        filter_row.pack(fill=tk.X, padx=4, pady=(4, 0))
+        ttk.Label(filter_row, text="Filter by table:").pack(side=tk.LEFT)
+        self._table_filter_var = tk.StringVar(value="All tables")
+        self._table_filter_cb = ttk.Combobox(filter_row, textvariable=self._table_filter_var,
+                                              state="readonly", width=20)
+        self._table_filter_cb["values"] = ["All tables"]
+        self._table_filter_cb.pack(side=tk.LEFT, padx=6)
+        self._table_filter_var.trace_add("write", lambda *_: self._apply_field_filter())
+
+        field_frame = ttk.Frame(fields_lf)
+        field_frame.pack(fill=tk.BOTH, expand=True)
+        self._field_list = tk.Listbox(field_frame, height=5, selectmode=tk.SINGLE,
+                                       exportselection=False, font=("Courier", 11))
+        fields_vsb = ttk.Scrollbar(field_frame, orient=tk.VERTICAL, command=self._field_list.yview)
         self._field_list.configure(yscrollcommand=fields_vsb.set)
         self._field_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
         fields_vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=4, padx=(0, 4))
@@ -62,13 +82,20 @@ class RuleEditorFrame(ttk.Frame):
         self._run_btn.pack(side=tk.LEFT)
         self._run_progress = ttk.Progressbar(action_row, mode="indeterminate", length=120)
         self._run_progress.pack(side=tk.LEFT, padx=8)
-        self._next_btn = ttk.Button(action_row, text="Next: Reports →", command=self._proceed, state=tk.DISABLED)
-        self._next_btn.pack(side=tk.RIGHT)
 
-    def set_fields(self, columns: list[str]):
+    def set_fields(self, columns: list[str], table_names: list[str] = None):
+        self._all_fields = list(columns)
+        choices = ["All tables"] + (table_names or [])
+        self._table_filter_cb["values"] = choices
+        self._table_filter_var.set("All tables")
+        self._apply_field_filter()
+
+    def _apply_field_filter(self):
+        sel = self._table_filter_var.get()
         self._field_list.delete(0, tk.END)
-        for col in columns:
-            self._field_list.insert(tk.END, col)
+        for col in self._all_fields:
+            if sel == "All tables" or col.startswith(sel + "_"):
+                self._field_list.insert(tk.END, col)
 
     def load_rules(self, rules: list[dict]):
         self._rules = [dict(r) for r in rules]

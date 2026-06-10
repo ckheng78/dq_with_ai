@@ -129,6 +129,9 @@ class JoinEditorFrame(ttk.Frame):
                                         state="readonly", width=30)
         self._master_cb.pack(side=tk.LEFT, padx=6)
         self._master_var.trace_add("write", lambda *_: self._rebuild_rules())
+        self._next_btn = ttk.Button(top, text="Next: Define Rules →",
+                                     command=self._proceed, state=tk.DISABLED)
+        self._next_btn.pack(side=tk.RIGHT)
 
         # Join rules area — canvas provides horizontal scroll when conditions exceed window width
         rules_outer = ttk.Frame(self)
@@ -166,13 +169,6 @@ class JoinEditorFrame(ttk.Frame):
         hsb.grid(row=1, column=0, sticky="ew")
         pf.rowconfigure(0, weight=1)
         pf.columnconfigure(0, weight=1)
-
-        # Next button
-        bot = ttk.Frame(self)
-        bot.pack(fill=tk.X, padx=10, pady=(6, 10))
-        self._next_btn = ttk.Button(bot, text="Next: Define Rules →",
-                                     command=self._proceed, state=tk.DISABLED)
-        self._next_btn.pack(side=tk.RIGHT)
 
     def _on_rules_configure(self, event=None):
         self._rules_canvas.configure(scrollregion=self._rules_canvas.bbox("all"))

@@ -39,18 +39,59 @@ def _detect_date_columns(con, safe_path: str, columns: list[str], opts: str) -> 
 class Database:
     def __init__(self):
         self.con = duckdb.connect(database=":memory:")
-        self._registered_tables = []
+        self._registered_tables: list[str] = []
+        self._table_base_sql: dict[str, str] = {}  # original SELECT SQL before pre-join filters
+        self._join_base_sql: str = ""               # original JOIN SQL before post-join filters
 
-    def register_csv(self, name: str, path: str, *,
-                     encoding: str = "utf-8", delimiter: str = ",", engine: str = "C"):
+    def get_csv_columns(self, path: str, *,
+                        encoding: str = "utf-8", delimiter: str = ",", engine: str = "C") -> list[str]:
         safe_path = path.replace("\\", "/")
         opts = _csv_opts(encoding, delimiter, engine)
-
-        columns = [
+        return [
             row[0] for row in self.con.execute(
                 f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
             ).fetchall()
         ]
+
+    def get_csv_sample_values(self, path: str, *,
+                               encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
+                               n_rows: int = 200, n_distinct: int = 3) -> tuple[list[str], dict[str, list[str]]]:
+        """Returns (columns, {col: [up to n_distinct non-empty sample values]})."""
+        safe_path = path.replace("\\", "/")
+        opts = _csv_opts(encoding, delimiter, engine)
+        result = self.con.execute(
+            f"SELECT * FROM read_csv_auto('{safe_path}', {opts}) LIMIT {n_rows}"
+        )
+        cols = [desc[0] for desc in result.description]
+        rows = result.fetchall()
+        samples: dict[str, list[str]] = {}
+        for col_idx, col in enumerate(cols):
+            seen: list[str] = []
+            for row in rows:
+                val = row[col_idx]
+                if val is not None:
+                    s = str(val).strip()
+                    if s and s not in seen:
+                        seen.append(s)
+                        if len(seen) >= n_distinct:
+                            break
+            samples[col] = seen
+        return cols, samples
+
+    def register_csv(self, name: str, path: str, *,
+                     encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
+                     selected_columns: list[str] = None):
+        safe_path = path.replace("\\", "/")
+        opts = _csv_opts(encoding, delimiter, engine)
+
+        if selected_columns is not None:
+            columns = list(selected_columns)
+        else:
+            columns = [
+                row[0] for row in self.con.execute(
+                    f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
+                ).fetchall()
+            ]
         print(f"[DB] Registering '{name}': {len(columns)} columns (enc={encoding}, delim={delimiter!r}, engine={engine})")
         date_cols = _detect_date_columns(self.con, safe_path, columns, opts)
 
@@ -62,11 +103,12 @@ class Database:
             else:
                 select_parts.append(f'"{col}" AS "{alias}"')
 
-        self.con.execute(
-            f'CREATE OR REPLACE VIEW "{name}" AS '
+        base_sql = (
             f'SELECT {", ".join(select_parts)} '
             f"FROM read_csv_auto('{safe_path}', {opts})"
         )
+        self.con.execute(f'CREATE OR REPLACE VIEW "{name}" AS {base_sql}')
+        self._table_base_sql[name] = base_sql
 
         print(f"[DB] '{name}' ready. Date columns: {sorted(date_cols) or 'none'}")
         if name not in self._registered_tables:
@@ -88,7 +130,97 @@ class Database:
         cols, rows = self.get_preview(table_name, n)
         return [dict(zip(cols, row)) for row in rows]
 
+    def get_column_types(self, table_name: str) -> dict[str, str]:
+        """Returns {col_name: 'date' | 'string'} for a registered table."""
+        result = self.con.execute(f'DESCRIBE "{table_name}"').fetchall()
+        return {row[0]: ("date" if row[1].upper() == "DATE" else "string") for row in result}
+
+    def apply_filters(self, filters: list[dict]):
+        """Rebuild each table's view with WHERE clauses derived from active filters."""
+        by_table: dict[str, list[dict]] = {t: [] for t in self._registered_tables}
+        for f in filters:
+            if f["table"] in by_table:
+                by_table[f["table"]].append(f)
+
+        for table in self._registered_tables:
+            base_sql = self._table_base_sql[table]
+            conditions = [
+                c for f in by_table[table]
+                if (c := self._build_filter_condition(f)) is not None
+            ]
+            if conditions:
+                where = " AND ".join(conditions)
+                sql = f"SELECT * FROM ({base_sql}) WHERE {where}"
+                print(f"[FILTER] {table}: WHERE {where}")
+            else:
+                sql = base_sql
+            self.con.execute(f'CREATE OR REPLACE VIEW "{table}" AS {sql}')
+
+    @staticmethod
+    def _build_filter_condition(f: dict) -> str | None:
+        field = f["field"]
+        op    = f["operator"]
+        val   = f.get("value", "").strip()
+        val2  = f.get("value2", "").strip()
+
+        if not val:
+            return None
+
+        qf = f'"{field}"'
+
+        def esc(v: str) -> str:
+            return v.replace("'", "''")
+
+        if op == "contains":
+            pattern = val.replace("*", "%").replace("?", "_")
+            if "%" not in pattern and "_" not in pattern:
+                pattern = f"%{pattern}%"
+            return f"{qf} LIKE '{esc(pattern)}'"
+        if op == "not_contains":
+            pattern = val.replace("*", "%").replace("?", "_")
+            if "%" not in pattern and "_" not in pattern:
+                pattern = f"%{pattern}%"
+            return f"({qf} NOT LIKE '{esc(pattern)}' OR {qf} IS NULL)"
+        if op == "select":
+            items = [v.strip() for v in val.split(",") if v.strip()]
+            if not items:
+                return None
+            in_list = ", ".join(f"'{esc(v)}'" for v in items)
+            return f"{qf} IN ({in_list})"
+        if op == "not_select":
+            items = [v.strip() for v in val.split(",") if v.strip()]
+            if not items:
+                return None
+            in_list = ", ".join(f"'{esc(v)}'" for v in items)
+            return f"({qf} NOT IN ({in_list}) OR {qf} IS NULL)"
+        if op == "earlier_than":
+            return f"{qf} < CAST('{esc(val)}' AS DATE)"
+        if op == "later_than":
+            return f"{qf} > CAST('{esc(val)}' AS DATE)"
+        if op == "between":
+            if not val2:
+                return None
+            return f"{qf} BETWEEN CAST('{esc(val)}' AS DATE) AND CAST('{esc(val2)}' AS DATE)"
+        return None
+
+    def apply_join_filters(self, filters: list[dict]):
+        """Rebuild joined_table view with WHERE clauses from active post-join filters."""
+        if not self._join_base_sql:
+            return
+        conditions = [
+            c for f in filters
+            if (c := self._build_filter_condition(f)) is not None
+        ]
+        if conditions:
+            where = " AND ".join(conditions)
+            sql = f"SELECT * FROM ({self._join_base_sql}) WHERE {where}"
+            print(f"[POST-JOIN FILTER] WHERE {where}")
+        else:
+            sql = self._join_base_sql
+        self.con.execute(f"CREATE OR REPLACE VIEW joined_table AS {sql}")
+
     def execute_join(self, sql: str):
+        self._join_base_sql = sql
         self.con.execute(f"CREATE OR REPLACE VIEW joined_table AS {sql}")
 
     def get_joined_preview(self, n: int = 100) -> tuple[list[str], list[tuple]]:

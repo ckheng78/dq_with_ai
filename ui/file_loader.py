@@ -55,6 +55,77 @@ class FileOptionsDialog(tk.Toplevel):
         self.destroy()
 
 
+class FieldSelectorDialog(tk.Toplevel):
+    """Column picker shown after file options are confirmed."""
+
+    def __init__(self, parent, filename, columns, samples: dict):
+        super().__init__(parent)
+        self.title(f"Select Fields — {filename}")
+        self.resizable(True, True)
+        self.grab_set()
+        self.result = None  # list[str] on OK, None on cancel
+        self._columns = columns  # preserve original column names for result mapping
+
+        ttk.Label(self, text="Choose fields to load  (at least 1 required):",
+                  font=("TkDefaultFont", 10, "bold")).pack(padx=14, pady=(12, 2))
+        ttk.Label(self, text=f"{len(columns)} columns found — sample values shown for preview").pack(
+            padx=14, anchor=tk.W)
+
+        sel_row = ttk.Frame(self)
+        sel_row.pack(fill=tk.X, padx=14, pady=(6, 2))
+        ttk.Button(sel_row, text="Select All", command=self._select_all).pack(side=tk.LEFT)
+        ttk.Button(sel_row, text="Clear All", command=self._clear_all).pack(side=tk.LEFT, padx=6)
+
+        list_frame = ttk.Frame(self)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 4))
+        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        hsb = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL)
+        self._lb = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, exportselection=False,
+                               yscrollcommand=vsb.set, xscrollcommand=hsb.set,
+                               height=min(len(columns), 20), width=80,
+                               font=("Courier", 10))
+        vsb.config(command=self._lb.yview)
+        hsb.config(command=self._lb.xview)
+        self._lb.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+
+        col_width = max((len(c) for c in columns), default=20)
+        for col in columns:
+            vals = samples.get(col, [])
+            val_str = ",  ".join(f'"{v}"' for v in vals) if vals else "(no data)"
+            self._lb.insert(tk.END, f"{col:<{col_width}}    {val_str}")
+        self._lb.select_set(0, tk.END)
+
+        self._err_var = tk.StringVar()
+        ttk.Label(self, textvariable=self._err_var, foreground="red").pack(padx=14, anchor=tk.W)
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(pady=(4, 12))
+        ttk.Button(btn_row, text="Load", command=self._ok).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side=tk.LEFT)
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.wait_window()
+
+    def _select_all(self):
+        self._lb.select_set(0, tk.END)
+        self._err_var.set("")
+
+    def _clear_all(self):
+        self._lb.select_clear(0, tk.END)
+
+    def _ok(self):
+        selected = [self._columns[i] for i in self._lb.curselection()]
+        if not selected:
+            self._err_var.set("Please select at least one field.")
+            return
+        self.result = selected
+        self.destroy()
+
+
 class FileLoaderFrame(ttk.Frame):
     def __init__(self, parent, db, on_loaded, **kwargs):
         super().__init__(parent, **kwargs)
@@ -96,12 +167,24 @@ class FileLoaderFrame(ttk.Frame):
 
             opts = dlg.result
             try:
-                self.db.register_csv(safe_name, path, **opts)
-                self._loaded_files[safe_name] = {"path": path, **opts}
+                all_cols, samples = self.db.get_csv_sample_values(path, **opts)
+            except Exception as exc:
+                messagebox.showerror("Read Error", f"Could not read columns from {os.path.basename(path)}:\n{exc}")
+                continue
+
+            dlg2 = FieldSelectorDialog(self, os.path.basename(path), all_cols, samples)
+            if dlg2.result is None:
+                continue  # user cancelled field selection
+
+            selected_cols = dlg2.result
+            try:
+                self.db.register_csv(safe_name, path, selected_columns=selected_cols, **opts)
+                self._loaded_files[safe_name] = {"path": path, "selected_columns": selected_cols, **opts}
                 delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
                 self._file_list.insert(
                     tk.END,
-                    f"{safe_name}  [enc={opts['encoding']}, delim={delim_display}, engine={opts['engine']}]"
+                    f"{safe_name}  [enc={opts['encoding']}, delim={delim_display}, "
+                    f"engine={opts['engine']}, fields={len(selected_cols)}/{len(all_cols)}]"
                 )
                 self._add_preview_tab(safe_name)
             except Exception as exc:
