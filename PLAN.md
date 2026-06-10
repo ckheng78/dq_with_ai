@@ -99,10 +99,15 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ### `core/llm.py`
 - Reads Ollama config from `settings.json`
 - `translate_rule(nl, col_hints)` → SQL string (rules only; joins no longer use LLM)
-- `_extract_sql(text)` post-processes the raw LLM response:
-  1. Extracts content from markdown code fences if present
-  2. Anchors to the first SQL keyword (SELECT / WITH / etc.) to skip preamble
-  3. Truncates at the last `;` to drop trailing commentary
+- POSTs to `/api/chat` with a `messages` list (`role: system` + `role: user`); `stream: false`; hardcoded `options`: `temperature: 0`, `num_predict: 200`, `stop: [";", "```", "\n\n"]`
+- Raw text extracted from `data["message"]["content"]` (not `data["response"]`)
+- `_extract_sql(text)` → `str | None` — post-processes the raw LLM response:
+  1. Strips ` ```sql ` and ` ``` ` fences via `re.sub`
+  2. Finds the first `\bSELECT\b` match; returns `None` if absent
+  3. Truncates at the first `;` (not last) to discard anything following the statement
+  4. Returns `None` if the result contains more than one `SELECT` (rejects back-to-back queries)
+- `_validate_sql_columns(sql, valid_columns)` → `bool` — extracts SAP-style column candidates matching `\bPA\w+\b` and checks each against the set of uppercased valid column names; prints a rejection message and returns `False` on the first unknown candidate
+- `translate_rule` contains the retry loop: up to 5 attempts; calls `_call` then `_extract_sql`; validates `SELECT` guard; validates column names via `_validate_sql_columns`; sleeps 5 s between failed attempts; raises `LLMConnectionError` after all attempts are exhausted
 - Full debug logging printed to terminal: URL, model, prompt, raw response, extracted SQL
 - Raises `LLMConnectionError` on unreachable endpoint or timeout
 
@@ -198,8 +203,8 @@ Contains `_build_expression` plus two classes:
   - Scrollable Listbox in Courier 11 font
   - Populated with `joined_table` columns **after** derived fields are applied (so derived columns appear)
 - Rule list Listbox uses `exportselection=False` to prevent selection loss on focus change
-- LLM translation with retry: up to 5 attempts; validates extracted SQL starts with `SELECT`; sleeps 5 s between failed attempts; connection/HTTP errors abort immediately; user sees an error message after all retries are exhausted
-- "Regenerate" re-invokes the same retry loop if the user wants a fresh attempt
+- LLM translation: calls `llm.translate_rule(nl, col_hints)` in a background thread; retry logic (5 attempts, SELECT guard, column validation, 5 s sleep) is encapsulated inside `translate_rule` — the UI layer only handles success (show SQL) or exception (show error dialog)
+- "Regenerate" re-invokes `translate_rule` if the user wants a fresh attempt
 - **SQL review box**: kept in `tk.NORMAL` state permanently with a `<Key>` binding that returns `"break"` — makes it read-only without triggering macOS's system-override of background/foreground colours on disabled `tk.Text` widgets
 - **joined_table preview**: Treeview at the bottom of the right panel (same scrollbar pattern as Define Join); populated by `_refresh_preview()` called from `set_fields()` — reflects the final joined + filtered + derived column set
 
@@ -215,7 +220,7 @@ Contains `_build_expression` plus two classes:
     "model": "my_qwen",
     "timeout_seconds": 60,
     "system_prompt_join": "(unused — joins are now built visually)",
-    "system_prompt_rule": "You are a SQL code generator for DuckDB. Output a single DuckDB SQL SELECT statement and nothing else. The query must select only the rows that violate the data quality rule against a table called 'joined_table'. Do not write any explanation, greeting, preamble, comment, or markdown. Your entire response must be valid SQL that can be executed directly. DO NOT INTERPRET THE SCHEMA."
+    "system_prompt_rule": "You are a DuckDB SQL generator. You output one SELECT statement and nothing else. No explanation. No markdown. No preamble. No comments. No extra conditions. Only the exact SQL that answers the user request.\n\nExample:\nUser: find all records where STATUS = 'A'\nSQL: SELECT * FROM joined_table WHERE STATUS = 'A'\n\nNow generate SQL for the user request below. Output only the SQL."
   },
   "paths": {
     "data_dir": "data",
@@ -270,8 +275,10 @@ Filters are not persisted — they are re-applied interactively each session. Th
 - **`_rebuild_joined_table` as single source of truth**: Both `apply_join_filters` and `apply_derived_fields` delegate to this method, which always rebuilds the full `joined_table` view from `_join_base_sql` → WHERE filter → derived SELECT. This prevents any ordering dependency between the two steps.
 - **Visual join builder (no LLM for joins)**: Joins are defined via dropdown conditions (left field / operator / right field) rather than natural language. This is deterministic, instant, and avoids LLM reliability issues for a structured operation.
 - **LLM only for rules**: The LLM (Ollama `my_qwen`) is used only to translate natural language DQ rules into SQL. The SQL is always shown to the user before execution. A "Regenerate" button allows re-prompting.
-- **LLM retry on invalid SQL**: After each translation attempt, the extracted SQL is validated — it must start with `SELECT`. If it does not, the worker sleeps 5 s and retries, up to 5 total attempts. Connection/timeout errors abort immediately. This prevents hallucinated non-SQL responses from silently becoming rules.
-- **LLM response extraction**: `_extract_sql()` strips markdown fences, anchors to the first SQL keyword, and truncates at the last semicolon — making the pipeline robust to preamble and trailing commentary from the model.
+- **`/api/chat` instead of `/api/generate`**: Using the chat endpoint with a `messages` array (system + user roles) prevents KV context bleed between calls — `/api/generate` carries a `context` token array in its response that bleeds prior state into subsequent requests. Temperature is hardcoded to `0` in the payload `options` to eliminate stochastic sampling; `num_predict: 200` and stop tokens `[";", "```", "\n\n"]` keep output short and terminate at natural SQL boundaries.
+- **LLM retry on invalid SQL**: The retry loop lives inside `translate_rule` (not in the UI layer). After each `_call`, the result is validated: `_extract_sql` must return a non-None value; it must start with `SELECT`; `_validate_sql_columns` must pass. Failure on any check sleeps 5 s and retries, up to 5 total attempts. Connection/timeout errors abort immediately. `LLMConnectionError` is raised after all attempts are exhausted.
+- **`_validate_sql_columns` for SAP column hallucination**: Qwen was generating syntactically valid SQL referencing column names that do not exist in `joined_table` (memorised SAP infotype fields from training data). `_validate_sql_columns` extracts all `\bPA\w+\b` token candidates (SAP-style column names) and rejects the SQL if any are absent from the valid column set, triggering a retry.
+- **`_extract_sql` hardening**: Strips fences via `re.sub` (not `re.search` on fence content, which missed unclosed fences); truncates at the *first* semicolon (not last) to prevent accepting two statements; returns `None` (not empty string) on extraction failure so callers can distinguish no-SQL from empty-SQL; rejects output containing more than one `SELECT` to prevent paired wrong+correct query responses from slipping through.
 - **Recurring path**: Saved SQL from JSON is used directly on repeat runs — no re-translation needed. Filters are not saved and are skipped in the recurring path.
 - **Background threads**: Long DuckDB operations run in `threading.Thread`; results posted back via `self.after(0, ...)` to keep Tkinter responsive. Exception variables captured as lambda defaults (`lambda e=exc: ...`) to avoid Python 3 closure scoping bugs.
 - **Per-file load options**: Encoding, delimiter, and engine are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
