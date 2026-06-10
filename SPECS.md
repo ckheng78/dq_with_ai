@@ -52,3 +52,9 @@ The users want to use the application to run data quality checks on the data set
 # LLM
 - Intent to use Ollama with a small LLM model that is capable of converting Natural Language to SQL
 - Ensure there are configuration file stored in \config folder that allows the user to configure the local API gateway to call
+
+# LLM CONFIG
+- Ollama is the API provider
+- Expected URL: http://localhost:11434
+- Model: Qwen 2.5 Coder (3B or 7B) but I will name the model as "my_llm"
+- Ensure i can configure the endpoint and its setting via a config file stored in \config folder
