@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "ollama": {
+    "endpoint": "http://localhost:11434",
+    "model": "sqlcoder",
+    "timeout_seconds": 60,
+    "system_prompt_join": "You are a SQL expert specialising in DuckDB SQL. Given table names and their columns, convert the user's natural language join instruction into a valid DuckDB SQL SELECT statement. Return ONLY the SQL statement with no explanation, no markdown code fences, and no commentary.",
+    "system_prompt_rule": "You are a SQL expert specialising in DuckDB SQL. Given a table named 'joined_table' and its columns, convert the user's natural language data quality rule into a DuckDB SQL SELECT statement that returns ONLY the rows that violate the rule. Return ONLY the SQL statement with no explanation, no markdown code fences, and no commentary."
+  },
+  "paths": {
+    "data_dir": "data",
+    "rules_dir": "rules",
+    "joins_dir": "joins",
+    "reports_dir": "reports"
+  },
+  "ui": {
+    "preview_row_limit": 100,
+    "report_max_detail_rows": 10000
+  }
+}
