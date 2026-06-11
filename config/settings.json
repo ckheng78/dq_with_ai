@@ -12,7 +12,8 @@
     "data_dir": "data",
     "rules_dir": "rules",
     "joins_dir": "joins",
-    "reports_dir": "reports"
+    "reports_dir": "reports",
+    "workflows_dir": "workflows"
   },
   "ui": {
     "preview_row_limit": 100,

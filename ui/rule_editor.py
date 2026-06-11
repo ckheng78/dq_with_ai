@@ -248,6 +248,7 @@ class RuleEditorFrame(ttk.Frame):
     def _update_run_btn(self):
         ready = any(r.get("sql") for r in self._rules)
         self._run_btn.config(state=tk.NORMAL if ready else tk.DISABLED)
+        self._next_btn.config(state=tk.NORMAL if ready else tk.DISABLED)
 
     def _run_all(self):
         runnable = [r for r in self._rules if r.get("sql")]

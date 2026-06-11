@@ -1,3 +1,4 @@
+import csv
 import os
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
@@ -15,6 +16,17 @@ def generate_summary(results, total_rows: int, output_dir: str, templates_dir: s
     path = os.path.join(output_dir, f"summary_{timestamp}.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
+    return path
+
+
+def generate_violation_csv(result, output_dir: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c if c.isalnum() else "_" for c in result.name)
+    path = os.path.join(output_dir, f"violations_{safe_name}_{timestamp}.csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(result.columns)
+        writer.writerows(result.violating_rows)
     return path
 
 

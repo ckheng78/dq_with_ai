@@ -271,11 +271,36 @@ class JoinEditorFrame(ttk.Frame):
         messagebox.showerror("Join Error", msg)
 
     def get_join_config(self) -> dict:
+        raw_conditions = []
+        for widget in self._rule_widgets:
+            raw_conditions.append({
+                "secondary": widget.secondary,
+                "conditions": [
+                    {"bool_op": b, "left": l, "op": o, "right": r}
+                    for b, l, o, r in widget.get_conditions()
+                ],
+            })
         return {
             "tables": self._table_names,
             "master": self._master_var.get(),
             "sql": self._build_sql() or "",
+            "conditions": raw_conditions,
         }
+
+    def load_join_config(self, config: dict):
+        """Pre-populate join editor from a saved join config."""
+        master = config.get("master", "")
+        if master and master in self._table_names:
+            self._master_var.set(master)
+        # _rebuild_rules() fired synchronously by trace; widgets now exist
+        for widget, cond_data in zip(self._rule_widgets, config.get("conditions", [])):
+            # Remove default condition rows
+            for cond in list(widget._conditions):
+                cond.frame.destroy()
+            widget._conditions.clear()
+            # Restore saved conditions
+            for c in cond_data["conditions"]:
+                widget._add_condition(c.get("bool_op") or "AND", c["left"], c["op"], c["right"])
 
     def _proceed(self):
         self.on_joined(self.get_join_config())

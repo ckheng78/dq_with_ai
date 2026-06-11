@@ -13,6 +13,7 @@ _OP_KEY = {
     "later than":   "later_than",
     "between":      "between",
 }
+_KEY_OP = {v: k for k, v in _OP_KEY.items()}
 
 
 class FilterRow:
@@ -171,6 +172,20 @@ class FilterEditorFrame(ttk.Frame):
 
         self._next_btn.config(state=tk.NORMAL)
 
+    def load_filters(self, filters: list[dict]):
+        """Pre-populate filter rows from a saved filter list."""
+        filter_map = {f["field"]: f for f in filters}
+        for row in self._filter_rows:
+            if row.field_name not in filter_map:
+                continue
+            f = filter_map[row.field_name]
+            row._enabled_var.set(True)
+            row._on_toggle()
+            op_display = _KEY_OP.get(f["operator"], f["operator"])
+            row._op_var.set(op_display)
+            row._val1.set(f.get("value", ""))
+            row._val2.set(f.get("value2", ""))
+
     def _apply_and_proceed(self):
         filters = [f for row in self._filter_rows if (f := row.get_filter()) is not None]
         try:
@@ -260,6 +275,20 @@ class PostJoinFilterFrame(ttk.Frame):
                 self._filter_rows.append(row)
 
         self._next_btn.config(state=tk.NORMAL)
+
+    def load_filters(self, filters: list[dict]):
+        """Pre-populate filter rows from a saved filter list."""
+        filter_map = {f["field"]: f for f in filters}
+        for row in self._filter_rows:
+            if row.field_name not in filter_map:
+                continue
+            f = filter_map[row.field_name]
+            row._enabled_var.set(True)
+            row._on_toggle()
+            op_display = _KEY_OP.get(f["operator"], f["operator"])
+            row._op_var.set(op_display)
+            row._val1.set(f.get("value", ""))
+            row._val2.set(f.get("value2", ""))
 
     def _apply_and_proceed(self):
         filters = [f for row in self._filter_rows if (f := row.get_filter()) is not None]

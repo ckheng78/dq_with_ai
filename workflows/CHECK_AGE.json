@@ -1,0 +1,99 @@
+{
+  "name": "CHECK_AGE",
+  "files": [
+    {
+      "name": "PA0000",
+      "path": "data/PA0000.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "engine": "C",
+      "selected_columns": [
+        "MANDT",
+        "PERNR",
+        "BEGDA",
+        "ENDDA",
+        "SEQNR",
+        "MASSN",
+        "MASSN_TEXT",
+        "MASSG",
+        "MASSG_TEXT",
+        "STAT2",
+        "STAT2_TEXT"
+      ]
+    },
+    {
+      "name": "PA0002",
+      "path": "data/PA0002.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "engine": "C",
+      "selected_columns": [
+        "MANDT",
+        "PERNR",
+        "BEGDA",
+        "ENDDA",
+        "SEQNR",
+        "ANRED",
+        "VORNA",
+        "NACHN",
+        "GESCH",
+        "GESCH_TEXT",
+        "GBDAT",
+        "FAMST",
+        "FAMST_TEXT",
+        "NATIO"
+      ]
+    }
+  ],
+  "pre_join_filters": [],
+  "join": {
+    "tables": [
+      "PA0000",
+      "PA0002"
+    ],
+    "master": "PA0000",
+    "sql": "SELECT * FROM \"PA0000\"\nLEFT JOIN \"PA0002\" ON \"PA0000_PERNR\" = \"PA0002_PERNR\" AND \"PA0000_BEGDA\" >= \"PA0002_BEGDA\" AND \"PA0000_BEGDA\" <= \"PA0002_ENDDA\"",
+    "conditions": [
+      {
+        "secondary": "PA0002",
+        "conditions": [
+          {
+            "bool_op": null,
+            "left": "PA0000_PERNR",
+            "op": "=",
+            "right": "PA0002_PERNR"
+          },
+          {
+            "bool_op": "AND",
+            "left": "PA0000_BEGDA",
+            "op": ">=",
+            "right": "PA0002_BEGDA"
+          },
+          {
+            "bool_op": "AND",
+            "left": "PA0000_BEGDA",
+            "op": "<=",
+            "right": "PA0002_ENDDA"
+          }
+        ]
+      }
+    ]
+  },
+  "post_join_filters": [],
+  "derived_fields": [
+    {
+      "name": "AGE",
+      "expression": "DATEDIFF('year', \"PA0002_GBDAT\", CURRENT_DATE)"
+    }
+  ],
+  "rules": [
+    {
+      "name": "AGE",
+      "nl_description": "find all records where AGE is greater than 30",
+      "sql": "SELECT * FROM joined_table WHERE AGE > 30"
+    }
+  ],
+  "created_at": "2026-06-11T22:30:41.829752",
+  "updated_at": "2026-06-11T22:30:41.829752",
+  "version": 1
+}

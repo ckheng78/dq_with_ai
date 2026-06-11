@@ -361,6 +361,19 @@ class DerivedFieldsEditorFrame(ttk.Frame):
         row.frame.pack(fill=tk.X, padx=4, pady=2)
         self._rows.append(row)
 
+    def load_derived_fields(self, derived_list: list[dict]):
+        """Pre-populate derived field rows (Adv mode) from saved expressions."""
+        # Ensure enough rows exist
+        while len(self._rows) < len(derived_list):
+            self._add_row()
+        for row, d in zip(self._rows, derived_list):
+            row._enabled.set(True)
+            row._on_toggle()
+            row._name_var.set(d["name"])
+            row._adv_var.set(True)
+            row._on_adv_toggle()
+            row._adv_expr_var.set(d["expression"])
+
     def _apply_and_proceed(self):
         derived = [d for row in self._rows if (d := row.get_derived()) is not None]
         try:

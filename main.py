@@ -6,7 +6,7 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config", "settings.json")
 
-REQUIRED_DIRS = ["data", "rules", "joins", "reports", "config"]
+REQUIRED_DIRS = ["data", "rules", "joins", "reports", "config", "workflows"]
 
 
 def ensure_folders():

@@ -23,36 +23,49 @@ Business users need to run recurring data quality checks on large CSV datasets w
 ```
 dq_with_ai/
 ├── main.py                    # Entry point; folder checks; launches App
-├── app.py                     # Root Tk window; tab orchestration; startup routing
+├── app.py                     # Root Tk window; tab orchestration; workflow routing
 ├── ui/
+│   ├── workflow_launcher.py   # Startup dialog: list saved workflows + New/Run/Edit actions
 │   ├── file_loader.py         # File picker + per-file options + field selector + CSV preview
 │   ├── filter_editor.py       # Pre-join and post-join filter panels
 │   ├── join_editor.py         # Visual join builder (dropdowns, no LLM)
 │   ├── derived_fields_editor.py  # Derived fields panel (computed columns from joined_table)
 │   ├── rule_editor.py         # Rule list; NL per rule → LLM → SQL → run all
-│   └── report_viewer.py       # Show output paths; "Open in browser" buttons
+│   └── report_viewer.py       # Show output paths; "Open in browser" + "Open CSV" buttons
 ├── core/
 │   ├── db.py                  # DuckDB: register CSVs as views, filters, join, rules, export
 │   ├── llm.py                 # Ollama client: NL→SQL with system prompt (rules only)
 │   ├── rules.py               # Run all rules; return RuleResult dataclasses
-│   └── reporter.py            # Jinja2 HTML generation (summary + per-rule detail)
+│   └── reporter.py            # Jinja2 HTML + violation CSV generation
 ├── persistence/
-│   ├── join_store.py          # save/load_latest for \joins JSON files
-│   └── rule_store.py          # save/load_latest for \rules JSON files
+│   ├── workflow_store.py      # save/load_all for workflows JSON files (overwrites by name)
+│   ├── join_store.py          # Legacy — no longer called by main app
+│   └── rule_store.py          # Legacy — no longer called by main app
 ├── templates/
 │   ├── summary.html.j2
 │   └── detail.html.j2
 ├── config/
 │   └── settings.json          # Ollama endpoint, model, paths, system prompts
 ├── data/                      # User drops CSVs here
-├── rules/                     # Saved DQ rule JSON files
-├── joins/                     # Saved join rule JSON files
-└── reports/                   # Generated HTML + joined CSV output
+├── workflows/                 # Saved workflow JSON files (one per named workflow)
+├── rules/                     # Legacy saved DQ rule JSON files
+├── joins/                     # Legacy saved join rule JSON files
+└── reports/                   # Generated HTML, violation CSVs, joined CSV export
 ```
 
 ---
 
-## Tab Flow
+## Startup and Workflow Flow
+
+On launch, `WorkflowLauncher` appears as a modal dialog before any tab is accessible:
+
+- **+ New Workflow** → enables tab 1, user walks through all tabs manually
+- **Run** (saved workflow) → headless background execution (load files → filters → join → derived fields → rules) with a progress dialog; lands on Reports tab
+- **Edit** (saved workflow) → same DB operations in background, then all tabs pre-populated; lands on tab 6 (Rules)
+
+After rules run, user is prompted to save/overwrite the workflow by name. All six steps are captured in one JSON file.
+
+## Tab Flow (New Workflow path)
 
 ```
 1. Load Files → 2. Pre-Join Filters → 3. Define Join → 4. Post-Join Filters → 5. Derived Fields → 6. Define Rules → 7. Reports
@@ -118,17 +131,22 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ### `core/reporter.py`
 - `generate_summary(results, output_dir)` → timestamped HTML path
 - `generate_detail(result, output_dir)` → timestamped HTML path
+- `generate_violation_csv(result, output_dir)` → timestamped CSV path (`violations_<rule>_<timestamp>.csv`); writes all violating rows with no row cap; uses stdlib `csv`
 
-### `persistence/join_store.py` / `rule_store.py`
-- `save(data, dir)` → writes `<type>_<timestamp>.json`
-- `load_latest(dir)` → content of newest JSON file, or `None`
-- SQL is the canonical persisted artifact
+### `persistence/workflow_store.py`
+- `save(workflow, workflows_dir)` → writes `workflows/<safe_name>.json`; overwrites if same name; sets `created_at` on first save, always updates `updated_at`
+- `load_all(workflows_dir)` → list of all workflow dicts sorted by `updated_at` descending
+
+### `persistence/join_store.py` / `rule_store.py` (legacy)
+- No longer called by the main app; kept for reference only
 
 ---
 
 ## UI Module Responsibilities
 
 ### `ui/file_loader.py`
+- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, selected_columns}` for workflow save
+- `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread)
 - `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python)
 - `FieldSelectorDialog` — shown after options are confirmed; lists all CSV columns in a multi-select Listbox with up to 3 distinct sample values per row for preview; **Select All** / **Clear All** buttons; validates at least 1 field selected; columns are shown as `{name:<padded>  "val1",  "val2",  "val3"`
 - Load flow: options dialog → `db.get_csv_sample_values()` → field selector → `db.register_csv(..., selected_columns=...)`
@@ -153,11 +171,13 @@ Contains two panels that share `FilterRow`:
 - Scrollable canvas of `FilterRow` widgets grouped by table name with bold section headers
 - "Next: Define Join →" button at top-right
 - On proceed: calls `db.apply_filters(filters)` — rebuilds each individual table's view
+- `load_filters(filters)` — pre-populates from saved workflow (matches by field name, sets operator + values)
 
 **`PostJoinFilterFrame`** (tab 4 — Post-Join Filters):
 - Same structure as `FilterEditorFrame`; `set_joined_table(table_names)` queries `joined_table` and groups fields by `tablename_` prefix
 - "Next: Derived Fields →" button at top-right
 - On proceed: calls `db.apply_join_filters(filters)` — stores conditions; `_rebuild_joined_table` applies them
+- `load_filters(filters)` — same pre-population logic as `FilterEditorFrame`
 
 ### `ui/derived_fields_editor.py`
 Contains `_build_expression` plus two classes:
@@ -181,11 +201,14 @@ Contains `_build_expression` plus two classes:
 - "Next: Define Rules →" button at top-right
 - On proceed: calls `db.apply_derived_fields(derived)` — stores expressions; `_rebuild_joined_table` appends them as `SELECT *, expr AS "name" FROM (...)`
 - Rule editor field list is populated **after** this step so derived columns appear in it
+- `load_derived_fields(derived_list)` — restores each field in Adv mode using saved expression string; expands rows list if needed
 
 ### `ui/join_editor.py`
 - No LLM. SQL is generated directly from dropdown selections.
 - User picks the **master table** from a dropdown; remaining tables become secondaries in load order
 - "Next: Post-Join Filters →" navigation button at top-right of the panel
+- `get_join_config()` returns `{tables, master, sql, conditions}`; the `conditions` list saves raw per-secondary condition data for UI reconstruction in the Edit path
+- `load_join_config(config)` — sets master (fires `_rebuild_rules()` trace synchronously), then clears default condition rows and restores saved ones for each `JoinRuleWidget`
 - One `JoinRuleWidget` per secondary table, stacked vertically:
   - Label: `Rule N: <accumulated_left> LEFT JOIN <secondary>`
   - One or more `ConditionRow`: `[AND/OR?] [left_col ▼] [operator ▼] [right_col ▼] [×]`
@@ -197,8 +220,11 @@ Contains `_build_expression` plus two classes:
 - Generated SQL is printed to terminal for visibility before execution
 - Persisted join config stores `{tables, master, sql}`; no `nl_instruction`
 
+### `ui/workflow_launcher.py`
+- `WorkflowLauncher` modal `Toplevel`: shown on every startup; lists workflows with Run/Edit buttons; "New Workflow" skips straight to tab 1; closing the dialog is equivalent to New Workflow
+
 ### `ui/rule_editor.py`
-- "Next: Reports →" navigation button at top-right of the panel
+- "Next: Reports →" navigation button at top-right of the panel; enabled as soon as any rule has SQL (same condition as "Run All Rules")
 - "Available fields (joined_table)" LabelFrame:
   - "Filter by table:" Combobox — filters listbox to fields with `tablename_` prefix; "All tables" shows everything
   - Scrollable Listbox in Courier 11 font
@@ -242,27 +268,50 @@ System prompts are in config so they can be tuned without touching code.
 
 ## Persistence Schemas
 
-**`joins/join_<timestamp>.json`:**
+**`workflows/<name>.json`** (primary — replaces separate join/rule files):
 ```json
 {
-  "version": 1, "created_at": "...",
-  "tables": ["PA0000", "PA0001"],
-  "master": "PA0000",
-  "sql": "SELECT * FROM \"PA0000\"\nLEFT JOIN \"PA0001\" ON \"PA0000_PERNR\" = \"PA0001_PERNR\""
-}
-```
-
-**`rules/rules_<timestamp>.json`:**
-```json
-{
-  "version": 1, "created_at": "...",
+  "version": 1,
+  "name": "HR Monthly Check",
+  "created_at": "2026-06-11T...",
+  "updated_at": "2026-06-11T...",
+  "files": [
+    {
+      "name": "PA0000",
+      "path": "data/PA0000.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "engine": "C",
+      "selected_columns": ["PA0000_PERNR", "PA0000_EMAIL"]
+    }
+  ],
+  "pre_join_filters": [
+    {"field": "PA0000_STATUS", "table": "PA0000", "operator": "select", "value": "A,I", "value2": ""}
+  ],
+  "join": {
+    "tables": ["PA0000", "PA0001"],
+    "master": "PA0000",
+    "sql": "SELECT * FROM \"PA0000\"\nLEFT JOIN \"PA0001\" ON ...",
+    "conditions": [
+      {
+        "secondary": "PA0001",
+        "conditions": [{"bool_op": null, "left": "PA0000_PERNR", "op": "=", "right": "PA0001_PERNR"}]
+      }
+    ]
+  },
+  "post_join_filters": [],
+  "derived_fields": [
+    {"name": "age", "expression": "DATEDIFF('year', \"PA0002_GBDAT\", CURRENT_DATE)"}
+  ],
   "rules": [
     {"name": "null_email", "nl_description": "...", "sql": "SELECT * FROM joined_table WHERE PA0000_EMAIL IS NULL"}
   ]
 }
 ```
 
-Filters are not persisted — they are re-applied interactively each session. The recurring path (saved join + rules) skips both filter panels and runs directly against unfiltered views.
+File paths are stored relative to the project root (`base_dir`) so the workflow JSON is portable if the project folder is moved.
+
+**Legacy files** (`joins/join_<timestamp>.json`, `rules/rules_<timestamp>.json`) — still present on disk from earlier sessions but no longer written or read by the app.
 
 ---
 
@@ -280,7 +329,10 @@ Filters are not persisted — they are re-applied interactively each session. Th
 - **LLM retry on invalid SQL**: The retry loop lives inside `translate_rule` (not in the UI layer). After each `_call`, the result is validated: `_extract_sql` must return a non-None value; it must start with `SELECT`; `_validate_sql_columns` must pass. Failure on any check sleeps 5 s and retries, up to 5 total attempts. Connection/timeout errors abort immediately. `LLMConnectionError` is raised after all attempts are exhausted.
 - **`_validate_sql_columns` for SAP column hallucination**: Qwen was generating syntactically valid SQL referencing column names that do not exist in `joined_table` (memorised SAP infotype fields from training data). `_validate_sql_columns` extracts all `\bPA\w+\b` token candidates (SAP-style column names) and rejects the SQL if any are absent from the valid column set, triggering a retry.
 - **`_extract_sql` hardening**: Strips fences via `re.sub` (not `re.search` on fence content, which missed unclosed fences); truncates at the *first* semicolon (not last) to prevent accepting two statements; returns `None` (not empty string) on extraction failure so callers can distinguish no-SQL from empty-SQL; rejects output containing more than one `SELECT` to prevent paired wrong+correct query responses from slipping through.
-- **Recurring path**: Saved SQL from JSON is used directly on repeat runs — no re-translation needed. Filters are not saved and are skipped in the recurring path.
+- **Workflow as single unit of persistence**: All six steps (files, pre-join filters, join, post-join filters, derived fields, rules) are saved together in one named JSON. Overwrite-on-save keeps the `workflows/` directory clean. The old separate `joins/` and `rules/` saves are legacy.
+- **Run vs Edit paths**: The Run path is fully headless — DB operations in a background thread, progress dialog, lands on Reports. The Edit path does the same DB setup in a background thread, then populates all tab UIs on the main thread; user lands on tab 6 and can adjust anything.
+- **Relative file paths in workflow JSON**: Stored as `os.path.relpath(abs_path, base_dir)` so workflows survive a folder rename or move.
+- **Violation CSV per rule**: Generated alongside the HTML detail report; no row cap (unlike the HTML which has `report_max_detail_rows`). Users can open directly in Excel for full investigation.
 - **Background threads**: Long DuckDB operations run in `threading.Thread`; results posted back via `self.after(0, ...)` to keep Tkinter responsive. Exception variables captured as lambda defaults (`lambda e=exc: ...`) to avoid Python 3 closure scoping bugs.
 - **Per-file load options**: Encoding, delimiter, and engine are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
 
@@ -288,12 +340,23 @@ Filters are not persisted — they are re-applied interactively each session. Th
 
 ## Verification
 
-1. Load two CSVs (set encoding/delimiter/engine; pick a subset of fields); confirm preview shows only the selected `tablename_fieldname` columns
-2. In Pre-Join Filters: enable a `contains` filter on a string field and a date range filter; confirm "Next: Define Join →" proceeds and filters are reflected in the join preview
-3. In Define Join: select master table; define conditions; execute; confirm joined table preview; "Next: Post-Join Filters →" is enabled
-4. In Post-Join Filters: enable a filter on a joined field; confirm "Next: Derived Fields →" proceeds
-5. In Derived Fields: enable a row and test each category — String op, Date op with `TODAY` on one side (e.g. "Years between" for age), Numeric op, Conditional, and a Regex op (Match/Extract/Replace); also test "Adv" free-form expression entry; "Next: Define Rules →" populates the field list with derived columns visible
-6. In Define Rules: confirm field list shows filtered + derived columns grouped by table; confirm joined_table preview at bottom reflects all transformations; add 2–3 NL rules; translate each (verify retry fires if LLM returns non-SELECT); run all; confirm violation counts match manual inspection
-7. Generate reports; open in browser; confirm summary totals and detail rows are correct
-8. Save rules and joins; restart app; confirm auto-run dialog appears (filters and derived fields are skipped); confirm reports match Step 7
-9. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution
+### New workflow path
+1. Launch app — `WorkflowLauncher` appears (no saved workflows → only "+ New Workflow" shown)
+2. Click "+ New Workflow" → tab 1 enabled
+3. Load two CSVs (set encoding/delimiter/engine; pick a subset of fields); confirm preview shows only the selected `tablename_fieldname` columns
+4. In Pre-Join Filters: enable a `contains` filter on a string field and a date range filter; confirm "Next: Define Join →" proceeds
+5. In Define Join: select master table; define conditions; execute; confirm joined table preview; "Next: Post-Join Filters →" is enabled
+6. In Post-Join Filters: enable a filter on a joined field; confirm "Next: Derived Fields →" proceeds
+7. In Derived Fields: test each category (String, Date with TODAY, Numeric, Conditional, Regex, Adv); "Next: Define Rules →" populates field list with derived columns
+8. In Define Rules: add 2–3 NL rules; translate; save SQL; confirm "Next: Reports →" enables as soon as first SQL is saved; click it; confirm violation counts
+9. In Reports: for each rule, confirm both "Open HTML Report" and "Open Violation CSV" work; confirm CSV contains all violation rows with correct header
+10. When prompted, save the workflow under a name; confirm `workflows/<name>.json` is created
+
+### Run path
+11. Restart app — `WorkflowLauncher` shows saved workflow; click **Run**; confirm progress dialog shows steps; confirm reports match Step 8
+
+### Edit path
+12. Restart app; click **Edit** on the saved workflow; confirm all tabs pre-populated (filters checked, join conditions restored, derived fields shown in Adv mode, rules loaded); modify one rule; run all; save workflow; confirm JSON is overwritten (check `updated_at`)
+
+### Large-file test
+13. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution on both Run and New Workflow paths

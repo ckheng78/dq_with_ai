@@ -234,6 +234,38 @@ class FileLoaderFrame(ttk.Frame):
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
+    def get_file_configs(self, base_dir: str) -> list[dict]:
+        result = []
+        for name, cfg in self._loaded_files.items():
+            result.append({
+                "name": name,
+                "path": os.path.relpath(cfg["path"], base_dir),
+                "encoding": cfg["encoding"],
+                "delimiter": cfg["delimiter"],
+                "engine": cfg["engine"],
+                "selected_columns": cfg["selected_columns"],
+            })
+        return result
+
+    def populate_from_workflow(self, file_configs: list[dict], base_dir: str):
+        """Populate the UI from a saved workflow (CSVs already registered in db)."""
+        for fc in file_configs:
+            name = fc["name"]
+            if name in self._loaded_files:
+                continue
+            abs_path = os.path.normpath(os.path.join(base_dir, fc["path"]))
+            opts = {k: fc[k] for k in ("encoding", "delimiter", "engine")}
+            self._loaded_files[name] = {"path": abs_path, "selected_columns": fc["selected_columns"], **opts}
+            n = len(fc["selected_columns"])
+            delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
+            self._file_list.insert(
+                tk.END,
+                f"{name}  [enc={opts['encoding']}, delim={delim_display}, "
+                f"engine={opts['engine']}, fields={n}/{n}]",
+            )
+            self._add_preview_tab(name)
+        self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)
+
     def _proceed(self):
         if len(self._loaded_files) < 2:
             messagebox.showinfo("Two Tables Required", "Please load at least 2 CSV files to define a join.")
