@@ -162,11 +162,12 @@ Contains two panels that share `FilterRow`:
 ### `ui/derived_fields_editor.py`
 Contains `_build_expression` plus two classes:
 
-**`_build_expression(op, inputs)`** — translates a category/operation/inputs dict into a DuckDB SQL expression string. Supports 15 operations across 4 categories:
+**`_build_expression(op, inputs)`** — translates a category/operation/inputs dict into a DuckDB SQL expression string. Supports 19 operations across 5 categories:
 - String: `Concatenate`, `Upper`, `Lower`, `Length`, `Substring`
-- Date: `Extract Year`, `Extract Month`, `Extract Day`, `Days between`, `Months between`
+- Date: `Extract Year`, `Extract Month`, `Extract Day`, `Days between`, `Months between`, `Years between`; date-diff ops accept `TODAY` on either side (mapped to `CURRENT_DATE`)
 - Numeric: `Add`, `Subtract`, `Multiply`, `Divide`, `Round` (second operand is a field or a numeric literal)
 - Conditional: `If / Then / Else` → `CASE WHEN field op 'val' THEN 'x' ELSE 'y' END`
+- Regex: `Match` → `CAST(regexp_matches(...) AS VARCHAR)`, `Extract` → `regexp_extract(...)`, `Replace` → `regexp_replace(...)`; all use native DuckDB functions, no extensions required
 
 **`DerivedFieldRow`** — one row per derived field:
 - Checkbox enables/disables the row; all inputs grayed out when disabled
@@ -205,7 +206,7 @@ Contains `_build_expression` plus two classes:
 - Rule list Listbox uses `exportselection=False` to prevent selection loss on focus change
 - LLM translation: calls `llm.translate_rule(nl, col_hints)` in a background thread; retry logic (5 attempts, SELECT guard, column validation, 5 s sleep) is encapsulated inside `translate_rule` — the UI layer only handles success (show SQL) or exception (show error dialog)
 - "Regenerate" re-invokes `translate_rule` if the user wants a fresh attempt
-- **SQL review box**: kept in `tk.NORMAL` state permanently with a `<Key>` binding that returns `"break"` — makes it read-only without triggering macOS's system-override of background/foreground colours on disabled `tk.Text` widgets
+- **SQL box is editable**: kept in `tk.NORMAL` state with no key binding. Users can hand-edit LLM-generated SQL directly in the box; "Save SQL to Rule" is the explicit commit step. Background is `white` to visually signal editability. (Note: an earlier implementation used `<Key>` returning `"break"` to make it read-only without triggering macOS colour overrides — that constraint no longer applies since editability is the desired behaviour.)
 - **joined_table preview**: Treeview at the bottom of the right panel (same scrollbar pattern as Define Join); populated by `_refresh_preview()` called from `set_fields()` — reflects the final joined + filtered + derived column set
 
 ---
@@ -271,7 +272,7 @@ Filters are not persisted — they are re-applied interactively each session. Th
 - **Column renaming on load**: Every field is renamed `tablename_fieldname` at view creation. This makes all column names globally unique across tables, eliminating ambiguity in join conditions and rule SQL without needing table qualifiers.
 - **Field selection at load time**: Users choose which columns to include per file via `FieldSelectorDialog`. Sample values (up to 3 distinct per column) are shown as a preview to guide selection. Only selected columns are included in the registered view.
 - **Two-stage filtering**: Pre-join filters operate on individual table views (rebased from `_table_base_sql`). Post-join filters operate on `joined_table` (rebased from `_join_base_sql`). Both use the same `_build_filter_condition` logic. Re-applying filters always starts from the stored base SQL, preventing condition stacking across sessions.
-- **Derived fields layer**: After post-join filtering, users can define computed columns (String / Date / Numeric / Conditional categories, 15 operations, plus a free-form DuckDB expression fallback). Expressions are stored in `_join_derived_exprs` and appended by `_rebuild_joined_table` as a second wrapping SELECT, so re-running post-join filters never loses derived columns.
+- **Derived fields layer**: After post-join filtering, users can define computed columns (String / Date / Numeric / Conditional / Regex categories, 19 operations, plus a free-form DuckDB expression fallback). Expressions are stored in `_join_derived_exprs` and appended by `_rebuild_joined_table` as a second wrapping SELECT, so re-running post-join filters never loses derived columns. Date-diff operations accept `TODAY` on either side; `date_ref` in `_build_expression` maps the string `"TODAY"` to `CURRENT_DATE`.
 - **`_rebuild_joined_table` as single source of truth**: Both `apply_join_filters` and `apply_derived_fields` delegate to this method, which always rebuilds the full `joined_table` view from `_join_base_sql` → WHERE filter → derived SELECT. This prevents any ordering dependency between the two steps.
 - **Visual join builder (no LLM for joins)**: Joins are defined via dropdown conditions (left field / operator / right field) rather than natural language. This is deterministic, instant, and avoids LLM reliability issues for a structured operation.
 - **LLM only for rules**: The LLM (Ollama `my_qwen`) is used only to translate natural language DQ rules into SQL. The SQL is always shown to the user before execution. A "Regenerate" button allows re-prompting.
@@ -291,7 +292,7 @@ Filters are not persisted — they are re-applied interactively each session. Th
 2. In Pre-Join Filters: enable a `contains` filter on a string field and a date range filter; confirm "Next: Define Join →" proceeds and filters are reflected in the join preview
 3. In Define Join: select master table; define conditions; execute; confirm joined table preview; "Next: Post-Join Filters →" is enabled
 4. In Post-Join Filters: enable a filter on a joined field; confirm "Next: Derived Fields →" proceeds
-5. In Derived Fields: enable a row, pick category/operation, confirm expression is appended to `joined_table`; also test "Adv" free-form expression entry; "Next: Define Rules →" populates the field list with derived columns visible
+5. In Derived Fields: enable a row and test each category — String op, Date op with `TODAY` on one side (e.g. "Years between" for age), Numeric op, Conditional, and a Regex op (Match/Extract/Replace); also test "Adv" free-form expression entry; "Next: Define Rules →" populates the field list with derived columns visible
 6. In Define Rules: confirm field list shows filtered + derived columns grouped by table; confirm joined_table preview at bottom reflects all transformations; add 2–3 NL rules; translate each (verify retry fires if LLM returns non-SELECT); run all; confirm violation counts match manual inspection
 7. Generate reports; open in browser; confirm summary totals and detail rows are correct
 8. Save rules and joins; restart app; confirm auto-run dialog appears (filters and derived fields are skipped); confirm reports match Step 7

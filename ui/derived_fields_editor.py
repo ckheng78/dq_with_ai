@@ -1,13 +1,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-_CATEGORIES = ["String", "Date", "Numeric", "Conditional"]
+_CATEGORIES = ["String", "Date", "Numeric", "Conditional", "Regex"]
 
 _OPERATIONS = {
     "String":      ["Concatenate", "Upper", "Lower", "Length", "Substring"],
-    "Date":        ["Extract Year", "Extract Month", "Extract Day", "Days between", "Months between"],
+    "Date":        ["Extract Year", "Extract Month", "Extract Day", "Days between", "Months between", "Years between"],
     "Numeric":     ["Add", "Subtract", "Multiply", "Divide", "Round"],
     "Conditional": ["If / Then / Else"],
+    "Regex":       ["Match", "Extract", "Replace"],
 }
 
 
@@ -24,6 +25,9 @@ def _build_expression(op: str, inputs: dict) -> str | None:
             return v
         except ValueError:
             return f'CAST({qf(v)} AS DOUBLE)'
+
+    def date_ref(v: str) -> str:
+        return "CURRENT_DATE" if v == "TODAY" else qf(v)
 
     try:
         if op == "Upper":
@@ -43,10 +47,15 @@ def _build_expression(op: str, inputs: dict) -> str | None:
             return f"MONTH({qf(inputs['field'])})"
         if op == "Extract Day":
             return f"DAY({qf(inputs['field'])})"
-        if op == "Days between":
-            return f"DATEDIFF('day', {qf(inputs['field1'])}, {qf(inputs['field2'])})"
-        if op == "Months between":
-            return f"DATEDIFF('month', {qf(inputs['field1'])}, {qf(inputs['field2'])})"
+        if op in ("Days between", "Months between", "Years between"):
+            unit = {"Days between": "day", "Months between": "month", "Years between": "year"}[op]
+            return f"DATEDIFF('{unit}', {date_ref(inputs['field1'])}, {date_ref(inputs['field2'])})"
+        if op == "Match":
+            return f"CAST(regexp_matches({qf(inputs['field'])}, '{esc(inputs['pattern'])}') AS VARCHAR)"
+        if op == "Extract":
+            return f"regexp_extract({qf(inputs['field'])}, '{esc(inputs['pattern'])}')"
+        if op == "Replace":
+            return f"regexp_replace({qf(inputs['field'])}, '{esc(inputs['pattern'])}', '{esc(inputs['replacement'])}')"
         if op == "Add":
             return f"CAST({qf(inputs['field1'])} AS DOUBLE) + {num_op(inputs['operand2'])}"
         if op == "Subtract":
@@ -174,6 +183,14 @@ class DerivedFieldRow:
                          state=ro, width=width).pack(side=tk.LEFT, padx=2)
             return v
 
+        def date_cb(key: str, width: int = 22) -> tk.StringVar:
+            date_vals = ["TODAY"] + cols
+            v = tk.StringVar(value=cols[0] if cols else "TODAY")
+            self._input_vars[key] = v
+            ttk.Combobox(self._builder_frame, textvariable=v, values=date_vals,
+                         state=ro, width=width).pack(side=tk.LEFT, padx=2)
+            return v
+
         def entry(key: str, width: int = 8, default: str = "") -> tk.StringVar:
             v = tk.StringVar(value=default)
             self._input_vars[key] = v
@@ -202,10 +219,10 @@ class DerivedFieldRow:
             lbl("len:")
             entry("length", width=4, default="5")
 
-        elif op in ("Days between", "Months between"):
-            field_cb("field1", width=22)
+        elif op in ("Days between", "Months between", "Years between"):
+            date_cb("field1", width=22)
             lbl("to")
-            field_cb("field2", width=22)
+            date_cb("field2", width=22)
 
         elif op in ("Add", "Subtract", "Multiply", "Divide"):
             sym = {"Add": "+", "Subtract": "−", "Multiply": "×", "Divide": "÷"}[op]
@@ -221,6 +238,23 @@ class DerivedFieldRow:
             field_cb("field", width=22)
             lbl("decimals:")
             entry("decimals", width=3, default="2")
+
+        elif op == "Match":
+            field_cb("field", width=22)
+            lbl("matches:")
+            entry("pattern", width=20)
+
+        elif op == "Extract":
+            field_cb("field", width=22)
+            lbl("pattern:")
+            entry("pattern", width=20)
+
+        elif op == "Replace":
+            field_cb("field", width=20)
+            lbl("pattern:")
+            entry("pattern", width=14)
+            lbl("→")
+            entry("replacement", width=14)
 
         elif op == "If / Then / Else":
             field_cb("field", width=18)

@@ -69,9 +69,8 @@ class RuleEditorFrame(ttk.Frame):
         self._field_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
         fields_vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=4, padx=(0, 4))
 
-        ttk.Label(right, text="Generated SQL (review before running):").pack(anchor=tk.W, pady=(4, 2))
-        self._sql_box = tk.Text(right, height=4, wrap=tk.WORD, background="#f0f0f0", foreground="black")
-        self._sql_box.bind("<Key>", lambda e: "break")  # read-only without disabling rendering
+        ttk.Label(right, text="Generated SQL (edit if needed, then save):").pack(anchor=tk.W, pady=(4, 2))
+        self._sql_box = tk.Text(right, height=4, wrap=tk.WORD, background="white", foreground="black")
         self._sql_box.pack(fill=tk.X)
 
         self._save_rule_btn = ttk.Button(right, text="Save SQL to Rule", command=self._save_sql_to_rule, state=tk.DISABLED)
