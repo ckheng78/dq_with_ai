@@ -4,6 +4,20 @@ import duckdb
 _DATE_DETECT_SAMPLE = 200
 _DATE_DETECT_THRESHOLD = 0.8  # 80% of non-empty values must parse as DATE
 
+# All valid date format strings a user can assign to a column.
+_DATE_FORMAT_TYPES = {"Auto", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY",
+                      "DD/MM/YYYY HH:MM:SS", "MM/DD/YYYY HH:MM:SS", "DD-MM-YYYY"}
+
+
+def _type_cast_expr(col: str, col_type: str) -> str:
+    """Returns a SELECT expression that casts col to the requested type."""
+    qc = f'"{col}"'
+    if col_type == "numeric":
+        return f"TRY_CAST({qc} AS DOUBLE)"
+    if col_type == "currency":
+        return f"TRY_CAST({qc} AS DECIMAL(18,2))"
+    return qc  # varchar — no cast
+
 
 def _date_exprs(col: str, fmt: str) -> tuple[str, str]:
     """Returns (detect_condition, cast_expression) SQL fragments for a given date format."""
@@ -107,11 +121,28 @@ class Database:
             samples[col] = seen
         return cols, samples
 
-    def register_csv(self, name: str, path: str, *,
-                     encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
-                     date_format: str = "Auto", selected_columns: list[str] = None):
+    def detect_date_columns(self, path: str, *,
+                            encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
+                            date_format: str = "Auto") -> list[str]:
+        """Return column names that pass the date detection threshold (used to pre-populate the type picker)."""
         safe_path = path.replace("\\", "/")
         opts = _csv_opts(encoding, delimiter, engine)
+        columns = [
+            row[0] for row in self.con.execute(
+                f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
+            ).fetchall()
+        ]
+        return list(_detect_date_columns(self.con, safe_path, columns, opts, date_format).keys())
+
+    def register_csv(self, name: str, path: str, *,
+                     encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
+                     date_format: str = "Auto", selected_columns: list[str] = None,
+                     column_types: dict[str, str] = None):
+        """column_types maps original col name → 'varchar'|'date'|'numeric'|'currency'.
+        Columns absent from the dict fall through to date detection then VARCHAR."""
+        safe_path = path.replace("\\", "/")
+        opts = _csv_opts(encoding, delimiter, engine)
+        column_types = column_types or {}
 
         if selected_columns is not None:
             columns = list(selected_columns)
@@ -122,12 +153,26 @@ class Database:
                 ).fetchall()
             ]
         print(f"[DB] Registering '{name}': {len(columns)} columns (enc={encoding}, delim={delimiter!r}, engine={engine}, dfmt={date_format})")
-        date_col_exprs = _detect_date_columns(self.con, safe_path, columns, opts, date_format)
+
+        # Only columns without any explicit type run auto date-detection.
+        auto_cols = [c for c in columns if c not in column_types]
+        date_col_exprs = _detect_date_columns(self.con, safe_path, auto_cols, opts, date_format)
 
         select_parts = []
         for col in columns:
             alias = f"{name}_{col}"
-            if col in date_col_exprs:
+            override = column_types.get(col)
+            if override == "NUMERIC":
+                select_parts.append(f'{_type_cast_expr(col, "numeric")} AS "{alias}"')
+            elif override == "CURRENCY":
+                select_parts.append(f'{_type_cast_expr(col, "currency")} AS "{alias}"')
+            elif override in _DATE_FORMAT_TYPES:
+                _, cast_expr = _date_exprs(col, override)
+                select_parts.append(f'{cast_expr} AS "{alias}"')
+            elif override == "VARCHAR":
+                select_parts.append(f'"{col}" AS "{alias}"')
+            elif col in date_col_exprs:
+                # auto-detected (no explicit override — old workflows)
                 select_parts.append(f'{date_col_exprs[col]} AS "{alias}"')
             else:
                 select_parts.append(f'"{col}" AS "{alias}"')
@@ -160,9 +205,20 @@ class Database:
         return [dict(zip(cols, row)) for row in rows]
 
     def get_column_types(self, table_name: str) -> dict[str, str]:
-        """Returns {col_name: 'date' | 'string'} for a registered table."""
+        """Returns {col_name: 'date' | 'numeric' | 'currency' | 'string'} for a registered table."""
         result = self.con.execute(f'DESCRIBE "{table_name}"').fetchall()
-        return {row[0]: ("date" if row[1].upper() == "DATE" else "string") for row in result}
+        out = {}
+        for col, dtype, *_ in result:
+            dt = dtype.upper()
+            if dt == "DATE":
+                out[col] = "date"
+            elif dt == "DOUBLE":
+                out[col] = "numeric"
+            elif dt.startswith("DECIMAL"):
+                out[col] = "currency"
+            else:
+                out[col] = "string"
+        return out
 
     def apply_filters(self, filters: list[dict]):
         """Rebuild each table's view with WHERE clauses derived from active filters."""
@@ -239,6 +295,14 @@ class Database:
             if not val2:
                 return None
             return f"{qf} BETWEEN CAST('{esc(val)}' AS DATE) AND CAST('{esc(val2)}' AS DATE)"
+        if op == "greater_than":
+            return f"TRY_CAST({qf} AS DOUBLE) > {esc(val)}"
+        if op == "less_than":
+            return f"TRY_CAST({qf} AS DOUBLE) < {esc(val)}"
+        if op == "between_numeric":
+            if not val2:
+                return None
+            return f"TRY_CAST({qf} AS DOUBLE) BETWEEN {esc(val)} AND {esc(val2)}"
         return None
 
     def apply_join_filters(self, filters: list[dict]):

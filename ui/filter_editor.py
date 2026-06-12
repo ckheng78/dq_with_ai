@@ -1,8 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-_STRING_OPS = ["contains", "not contains", "equals", "not equals", "select", "not select", "is empty", "is not empty"]
-_DATE_OPS   = ["earlier than", "later than", "between", "is empty", "is not empty"]
+_STRING_OPS  = ["contains", "not contains", "equals", "not equals", "select", "not select", "is empty", "is not empty"]
+_DATE_OPS    = ["earlier than", "later than", "between", "is empty", "is not empty"]
+_NUMERIC_OPS = ["greater than", "less than", "between", "equals", "not equals", "is empty", "is not empty"]
 
 _OP_KEY = {
     "contains":     "contains",
@@ -14,10 +15,13 @@ _OP_KEY = {
     "earlier than": "earlier_than",
     "later than":   "later_than",
     "between":      "between",
+    "greater than": "greater_than",
+    "less than":    "less_than",
     "is empty":     "is_empty",
     "is not empty": "is_not_empty",
 }
 _KEY_OP = {v: k for k, v in _OP_KEY.items()}
+_KEY_OP["between_numeric"] = "between"  # numeric between displays the same as date between
 
 
 class FilterRow:
@@ -37,7 +41,12 @@ class FilterRow:
         ttk.Label(self.frame, text=field_name, width=36, anchor=tk.W,
                   font=("Courier", 9)).grid(row=0, column=1, padx=(4, 8), sticky=tk.W)
 
-        ops = _DATE_OPS if field_type == "date" else _STRING_OPS
+        if field_type == "date":
+            ops = _DATE_OPS
+        elif field_type in ("numeric", "currency"):
+            ops = _NUMERIC_OPS
+        else:
+            ops = _STRING_OPS
         self._op_var = tk.StringVar(value=ops[0])
         self._op_cb = ttk.Combobox(self.frame, textvariable=self._op_var,
                                    values=ops, state="disabled", width=13)
@@ -90,22 +99,29 @@ class FilterRow:
                       width=13, state=st).pack(side=tk.LEFT)
             ttk.Label(self._val_frame, text="  YYYY-MM-DD",
                       foreground="gray").pack(side=tk.LEFT)
+        elif op in ("greater than", "less than"):
+            ttk.Entry(self._val_frame, textvariable=self._val1,
+                      width=16, state=st).pack(side=tk.LEFT)
         elif op == "between":
             ttk.Entry(self._val_frame, textvariable=self._val1,
                       width=13, state=st).pack(side=tk.LEFT)
             ttk.Label(self._val_frame, text=" to ").pack(side=tk.LEFT)
             ttk.Entry(self._val_frame, textvariable=self._val2,
                       width=13, state=st).pack(side=tk.LEFT)
-            ttk.Label(self._val_frame, text="  YYYY-MM-DD",
-                      foreground="gray").pack(side=tk.LEFT)
+            if self.field_type == "date":
+                ttk.Label(self._val_frame, text="  YYYY-MM-DD",
+                          foreground="gray").pack(side=tk.LEFT)
 
     def get_filter(self) -> dict | None:
         if not self._enabled_var.get():
             return None
+        op_key = _OP_KEY[self._op_var.get()]
+        if op_key == "between" and self.field_type in ("numeric", "currency"):
+            op_key = "between_numeric"
         return {
             "field":    self.field_name,
             "table":    self.table_name,
-            "operator": _OP_KEY[self._op_var.get()],
+            "operator": op_key,
             "value":    self._val1.get().strip(),
             "value2":   self._val2.get().strip(),
         }

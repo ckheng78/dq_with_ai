@@ -19,6 +19,8 @@ def _extract_sql(text: str) -> str | None:
         text = text[:semi]
     if len(re.findall(r"\bSELECT\b", text, re.IGNORECASE)) > 1:
         return None
+    # REGEX_LIKE does not exist in DuckDB; correct to REGEXP_MATCHES.
+    text = re.sub(r"\bREGEX_LIKE\b", "REGEXP_MATCHES", text, flags=re.IGNORECASE)
     return text.strip() or None
 
 

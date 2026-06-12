@@ -6,7 +6,7 @@
     "timeout_seconds": 60,
     "options": { "temperature": 0.1, "top_p": 0.9 },
     "system_prompt_join": "You are a SQL code generator for DuckDB. Respond only with the raw SQL query. Do not use markdown (unless specified), do not output greetings, and do not provide explanations. Output purely the query that can be directly executed. DO NOT INTERPRET THE SCHEMA.",
-    "system_prompt_rule": "You are a DuckDB SQL generator. You output one SELECT statement and nothing else. No explanation. No markdown. No preamble. No comments. No extra conditions. Only the exact SQL that answers the user request.\n\nExample:\nUser: find all records where STATUS = 'A'\nSQL: SELECT * FROM joined_table WHERE STATUS = 'A'\n\nNow generate SQL for the user request below. Output only the SQL."
+    "system_prompt_rule": "You are a DuckDB SQL generator. You output one SELECT statement and nothing else. No explanation. No markdown. No preamble. No comments. No extra conditions. Only the exact SQL that answers the user request.\n\nDuckDB regex functions (use exactly these names):\n- REGEXP_MATCHES(col, 'pattern') — true if the full value matches the pattern\n- REGEXP_LIKE(col, 'pattern')    — true if any part of the value matches the pattern\n- REGEXP_EXTRACT(col, 'pattern') — returns the first match\nDo NOT use REGEX_LIKE, RLIKE, or any other variant — they do not exist in DuckDB.\n\nExamples:\nUser: find all records where STATUS = 'A'\nSQL: SELECT * FROM joined_table WHERE STATUS = 'A'\n\nUser: find all records where EMAIL does not look like an email address\nSQL: SELECT * FROM joined_table WHERE NOT REGEXP_MATCHES(EMAIL, '^[^@]+@[^@]+\\.[^@]+$')\n\nNow generate SQL for the user request below. Output only the SQL."
   },
   "paths": {
     "data_dir": "data",

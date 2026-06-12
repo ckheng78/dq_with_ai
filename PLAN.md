@@ -82,18 +82,22 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 **CSV registration:**
 - `get_csv_columns(path, *, encoding, delimiter, engine)` → `list[str]` — reads column headers via `DESCRIBE` without registering the table
 - `get_csv_sample_values(path, *, encoding, delimiter, engine, n_rows=200, n_distinct=3)` → `(list[str], dict[str, list[str]])` — single `SELECT * LIMIT n_rows` query; returns column names plus up to 3 distinct non-empty sample values per column
-- `register_csv(name, path, *, encoding, delimiter, engine, date_format="Auto", selected_columns=None)` → lazy DuckDB view with:
+- `detect_date_columns(path, *, encoding, delimiter, engine, date_format="Auto")` → `list[str]` — public helper that runs `_detect_date_columns` against the file and returns names of columns passing the threshold; used to pre-populate the per-column type picker in `FieldSelectorDialog`
+- `register_csv(name, path, *, encoding, delimiter, engine, date_format="Auto", selected_columns=None, column_types=None)` → lazy DuckDB view with:
   - Columns filtered to `selected_columns` if provided; otherwise all columns used
   - All columns read as VARCHAR first (`all_varchar=true`) to prevent type misdetection
-  - Each column date-detected via `_detect_date_columns` using the specified `date_format` (≥80% threshold)
+  - `column_types` dict maps original column name → type string (`"VARCHAR"`, `"Auto"`, `"YYYY-MM-DD"`, `"DD/MM/YYYY"`, `"MM/DD/YYYY"`, `"DD/MM/YYYY HH:MM:SS"`, `"MM/DD/YYYY HH:MM:SS"`, `"DD-MM-YYYY"`, `"NUMERIC"`, `"CURRENCY"`); columns with an explicit override skip date auto-detection entirely
+  - Columns without any override in `column_types` fall through to `_detect_date_columns` with the file-level `date_format` (backward compat for old workflows where `column_types` is absent)
+  - `NUMERIC` → `TRY_CAST(col AS DOUBLE)`; `CURRENCY` → `TRY_CAST(col AS DECIMAL(18,2))`; date formats → `_date_exprs(col, fmt)`; `VARCHAR` → no cast
   - All columns renamed `tablename_fieldname` immediately at view creation — globally unique across tables
-  - Encoding, delimiter, engine, and date_format passed through to DuckDB cast expressions
   - Base SELECT SQL stored in `_table_base_sql[name]` for filter reapplication
+- `_type_cast_expr(col, type)` → cast SQL fragment for `"numeric"` (DOUBLE) and `"currency"` (DECIMAL(18,2))
+- `_DATE_FORMAT_TYPES` — module-level set of all valid date format strings; used in `register_csv` to detect date overrides
 - `_date_exprs(col, fmt)` → `(detect_condition, cast_expression)` — maps a format name to the DuckDB SQL fragments used for detection and view creation; supports `Auto` / `YYYY-MM-DD` (`TRY_CAST`), `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS` (`COALESCE` of timestamp + date strptime), `DD-MM-YYYY`
 - `_detect_date_columns(con, safe_path, columns, opts, date_format)` → `dict[str, str]` — returns `{col: cast_expression}` for columns that exceed the threshold; previously returned `set[str]`
 
 **Filtering:**
-- `get_column_types(table_name)` → `{col_name: 'date' | 'string'}` from `DESCRIBE`
+- `get_column_types(table_name)` → `{col_name: 'date' | 'numeric' | 'currency' | 'string'}` from `DESCRIBE` — DuckDB type `DATE` → `'date'`; `DOUBLE` → `'numeric'`; `DECIMAL(...)` → `'currency'`; everything else → `'string'`
 - `apply_filters(filters)` — rebuilds each individual table's view as `SELECT * FROM (base_sql) WHERE <conditions>`; tables with no active filters are restored to bare `base_sql`
 - `apply_join_filters(filters)` — stores conditions in `_join_filter_conditions`; calls `_rebuild_joined_table`
 - `_build_filter_condition(f)` (static) — generates a single SQL WHERE fragment from a filter dict:
@@ -102,6 +106,8 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
   - `contains` / `not_contains`: LIKE/NOT LIKE with `*`→`%`, `?`→`_` wildcard translation
   - `select` / `not_select`: IN / NOT IN with comma-separated value list
   - `earlier_than` / `later_than` / `between`: `CAST(... AS DATE)` comparisons (user inputs ISO `YYYY-MM-DD`; column is already typed DATE in the view)
+  - `greater_than` / `less_than`: `TRY_CAST(field AS DOUBLE) > val` / `< val` — for NUMERIC and CURRENCY columns
+  - `between_numeric`: `TRY_CAST(field AS DOUBLE) BETWEEN val AND val2` — emitted by `FilterRow.get_filter()` when field type is numeric/currency and operator is "between"
 
 **Derived fields:**
 - `apply_derived_fields(derived)` — stores `(name, expression)` pairs in `_join_derived_exprs`; calls `_rebuild_joined_table`
@@ -123,6 +129,7 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
   2. Finds the first `\bSELECT\b` match; returns `None` if absent
   3. Truncates at the first `;` (not last) to discard anything following the statement
   4. Returns `None` if the result contains more than one `SELECT` (rejects back-to-back queries)
+  5. Replaces `REGEX_LIKE` → `REGEXP_MATCHES` (case-insensitive) — `REGEX_LIKE` does not exist in DuckDB; LLM occasionally hallucinates this MySQL/Oracle name
 - `_validate_sql_columns(sql, valid_columns)` → `bool` — extracts SAP-style column candidates matching `\bPA\w+\b` and checks each against the set of uppercased valid column names; prints a rejection message and returns `False` on the first unknown candidate
 - `translate_rule` contains the retry loop: up to 5 attempts; calls `_call` then `_extract_sql`; validates `SELECT` guard; validates column names via `_validate_sql_columns`; sleeps 5 s between failed attempts; raises `LLMConnectionError` after all attempts are exhausted
 - Full debug logging printed to terminal: URL, model, prompt, raw response, extracted SQL
@@ -149,11 +156,17 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ## UI Module Responsibilities
 
 ### `ui/file_loader.py`
-- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, date_format, selected_columns}` for workflow save
-- `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread); reads `date_format` with `"Auto"` fallback for old workflows
-- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python), date format (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY)
-- `FieldSelectorDialog` — shown after options are confirmed; lists all CSV columns in a multi-select Listbox with up to 3 distinct sample values per row for preview; **Select All** / **Clear All** buttons; validates at least 1 field selected; columns are shown as `{name:<padded>  "val1",  "val2",  "val3"`
-- Load flow: options dialog → `db.get_csv_sample_values()` (csv opts only, no date_format) → field selector → `db.register_csv(..., date_format=..., selected_columns=...)`
+- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, date_format, selected_columns, column_types}` for workflow save
+- `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread); reads `date_format` with `"Auto"` fallback and `column_types` with `{}` fallback for old workflows
+- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python), date format (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY) — date format here is the detection hint used to pre-populate the per-column type picker
+- `FieldSelectorDialog` — shown after options are confirmed; rebuilt as a scrollable canvas of per-row widgets (replaces single Listbox):
+  - Each row: checkbox (include/exclude) + column name + sample values label + type dropdown
+  - Type dropdown values: `VARCHAR`, `Auto`, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS`, `DD-MM-YYYY`, `NUMERIC`, `CURRENCY`
+  - Detected date columns pre-populated with the file-level date format (from `FileOptionsDialog`); all other columns pre-populated with `VARCHAR`
+  - **Select All** / **Clear All** buttons; validates at least 1 field selected
+  - `result`: `list[str]` of selected column names; `column_types`: `dict[str, str]` of col → type for selected columns
+  - Accepts `detected_dates: set` and `default_date_format: str` constructor params
+- Load flow: options dialog → `db.detect_date_columns()` + `db.get_csv_sample_values()` → field/type selector → `db.register_csv(..., column_types=..., selected_columns=...)`
 - Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`; appends `dfmt=...` when date format is not Auto
 - Preview Treeview uses pixel-width columns (`len(col) * 9`) with `stretch=False` + horizontal scrollbar
 
@@ -165,13 +178,17 @@ Contains two panels that share `FilterRow`:
 - Operator options depend on field type:
   - String: `contains`, `not contains`, `equals`, `not equals`, `select`, `not select`, `is empty`, `is not empty`
   - Date: `earlier than`, `later than`, `between`, `is empty`, `is not empty`
+  - Numeric / Currency: `greater than`, `less than`, `between`, `equals`, `not equals`, `is empty`, `is not empty`
 - Value area rebuilds on operator change:
   - is empty / is not empty → label `(no value needed)`, no entry
   - equals / not equals → plain Entry
   - contains / not contains → Entry + wildcard hint `(* = any chars, ? = one char)`
   - select / not select → Entry + `(comma-separated)` hint
   - earlier/later than → Entry + `YYYY-MM-DD` hint
-  - between → two Entries joined by "to" + `YYYY-MM-DD` hint
+  - greater than / less than → plain Entry (numeric value)
+  - between (date) → two Entries joined by "to" + `YYYY-MM-DD` hint
+  - between (numeric/currency) → two Entries joined by "to", no hint label
+- `get_filter()` emits operator key `between_numeric` (not `between`) when field type is numeric/currency and operator is "between"; `_KEY_OP` maps `between_numeric` → `"between"` for pre-population on Edit path
 
 **`FilterEditorFrame`** (tab 2 — Pre-Join Filters):
 - Scrollable canvas of `FilterRow` widgets grouped by table name with bold section headers
@@ -289,7 +306,13 @@ System prompts are in config so they can be tuned without touching code.
       "delimiter": ",",
       "engine": "C",
       "date_format": "DD/MM/YYYY",
-      "selected_columns": ["PA0000_PERNR", "PA0000_EMAIL"]
+      "selected_columns": ["PA0000_PERNR", "PA0000_EMAIL", "PA0000_GBDAT", "PA0000_SALARY"],
+      "column_types": {
+        "PA0000_PERNR": "VARCHAR",
+        "PA0000_EMAIL": "VARCHAR",
+        "PA0000_GBDAT": "DD/MM/YYYY",
+        "PA0000_SALARY": "CURRENCY"
+      }
     }
   ],
   "pre_join_filters": [
@@ -342,8 +365,10 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Violation CSV per rule**: Generated alongside the HTML detail report; no row cap (unlike the HTML which has `report_max_detail_rows`). Users can open directly in Excel for full investigation.
 - **Background threads**: Long DuckDB operations run in `threading.Thread`; results posted back via `self.after(0, ...)` to keep Tkinter responsive. Exception variables captured as lambda defaults (`lambda e=exc: ...`) to avoid Python 3 closure scoping bugs.
 - **Per-file load options**: Encoding, delimiter, engine, and date format are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
-- **Per-file date format**: Users specify the date format stored in each CSV (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY) at load time. `Auto` uses `TRY_CAST(col AS DATE)` (ISO only). Slash formats use `TRY_STRPTIME`; the HH:MM:SS variants use `COALESCE(strptime_ts, strptime_date)::DATE` to handle mixed date-only and datetime values in the same column. Once columns are cast to DATE in the view, filter conditions always compare against ISO `YYYY-MM-DD` input — no changes needed to filter SQL. `date_format` is saved in the workflow JSON; old workflows without the key default to `"Auto"`.
-- **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `is_empty`/`is_not_empty` are evaluated before the empty-value guard in `_build_filter_condition` since they need no value.
+- **Per-file date format**: The date format in `FileOptionsDialog` is now a detection hint only — it drives `detect_date_columns()` to pre-populate the per-column type picker. The authoritative type for each column is the value stored in `column_types` in the workflow JSON. Old workflows without `column_types` fall through to the original file-level auto-detection path unchanged.
+- **Per-column type selection**: Users set each column's type individually in `FieldSelectorDialog` via a dropdown: `VARCHAR`, any date format, `NUMERIC`, or `CURRENCY`. All fields default to `VARCHAR` or the detected date format; users must explicitly promote a column to `NUMERIC` or `CURRENCY`. This prevents numeric-looking SAP codes (e.g., cost centre, infotype) from being misinterpreted as numbers. `NUMERIC` casts to `DOUBLE`; `CURRENCY` casts to `DECIMAL(18,2)` (no thousands separator or symbol stripping required since source data doesn't use them).
+- **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `greater than` / `less than` / `between` added for NUMERIC and CURRENCY columns; `between` on a numeric/currency field emits the `between_numeric` operator key so `_build_filter_condition` uses `TRY_CAST(... AS DOUBLE)` comparisons rather than DATE comparisons.
+- **LLM regex function correction**: `_extract_sql` silently replaces `REGEX_LIKE` → `REGEXP_MATCHES` after extraction. `REGEX_LIKE` does not exist in DuckDB; the LLM occasionally hallucinates it from MySQL/Oracle training data. The system prompt was also updated with an explicit DuckDB regex function reference (`REGEXP_MATCHES`, `REGEXP_LIKE`, `REGEXP_EXTRACT`) and a worked example to reduce the hallucination at the source.
 
 ---
 

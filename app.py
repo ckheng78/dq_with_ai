@@ -189,6 +189,7 @@ class App(tk.Tk):
                         encoding=fc["encoding"], delimiter=fc["delimiter"],
                         engine=fc["engine"], date_format=fc.get("date_format", "Auto"),
                         selected_columns=fc["selected_columns"],
+                        column_types=fc.get("column_types", {}),
                     )
 
                 if workflow.get("pre_join_filters"):
@@ -252,6 +253,7 @@ class App(tk.Tk):
                         encoding=fc["encoding"], delimiter=fc["delimiter"],
                         engine=fc["engine"], date_format=fc.get("date_format", "Auto"),
                         selected_columns=fc["selected_columns"],
+                        column_types=fc.get("column_types", {}),
                     )
 
                 if workflow.get("pre_join_filters"):

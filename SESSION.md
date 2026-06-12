@@ -1,5 +1,58 @@
 # Session Notes — DQ with AI
 
+## Session date: 2026-06-12 (continued)
+
+### What was built / changed
+
+### Modified: `core/llm.py`
+
+- `_extract_sql`: added step 5 — `re.sub(r'\bREGEX_LIKE\b', 'REGEXP_MATCHES', ...)` to silently correct a DuckDB non-existent function name that Qwen occasionally hallucinates from MySQL/Oracle training data
+
+### Modified: `config/settings.json`
+
+- `system_prompt_rule`: appended DuckDB regex function reference block listing `REGEXP_MATCHES`, `REGEXP_LIKE`, `REGEXP_EXTRACT` with descriptions and an explicit "Do NOT use REGEX_LIKE, RLIKE" warning; added a regex worked example (email pattern check)
+
+### Modified: `core/db.py`
+
+- Added `_type_cast_expr(col, type)` → `"NUMERIC"` → `TRY_CAST AS DOUBLE`; `"CURRENCY"` → `TRY_CAST AS DECIMAL(18,2)`
+- Added `_DATE_FORMAT_TYPES` module-level set — all valid date format strings; used by `register_csv` to detect date overrides
+- Added `detect_date_columns(path, ...)` public method — wraps `_detect_date_columns`; returns list of column names that pass the threshold; used by `file_loader` to pre-populate the type picker
+- `register_csv` accepts `column_types: dict[str, str]` kwarg; columns with an explicit override skip auto-detection; `NUMERIC`/`CURRENCY` → `_type_cast_expr`; date format strings → `_date_exprs`; `VARCHAR` → no cast; columns absent from `column_types` fall through to `_detect_date_columns` (old workflow compat)
+- `get_column_types` extended: `DOUBLE` → `'numeric'`; `DECIMAL(...)` → `'currency'`; `DATE` → `'date'`; everything else → `'string'`
+- `_build_filter_condition`: added `greater_than` (`TRY_CAST AS DOUBLE > val`), `less_than` (`TRY_CAST AS DOUBLE < val`), `between_numeric` (`TRY_CAST AS DOUBLE BETWEEN val AND val2`)
+
+### Modified: `ui/file_loader.py`
+
+- `_COL_TYPES` changed from `["VARCHAR", "DATE", "NUMERIC", "CURRENCY"]` to `["VARCHAR"] + _DATE_FORMATS + ["NUMERIC", "CURRENCY"]` — date format expanded into all individual format options
+- `FieldSelectorDialog` rebuilt from single Listbox → scrollable canvas of per-row widgets; each row: checkbox + column name + samples label + type Combobox
+- Constructor gains `default_date_format: str = "Auto"` param; detected date columns pre-populated with `default_date_format`; non-detected columns default to `"VARCHAR"`
+- `_ok`: stores `column_types` dict (col → exact dropdown value, no lowercasing); exposed as `dlg.column_types`
+- `_pick_files`: calls `db.detect_date_columns()` before opening dialog; passes `default_date_format=opts["date_format"]`; stores `column_types` in `_loaded_files`
+- `get_file_configs`: includes `column_types` in returned dict
+- `populate_from_workflow`: reads `column_types` with `{}` fallback; stores in `_loaded_files`
+
+### Modified: `ui/filter_editor.py`
+
+- Added `_NUMERIC_OPS`: `greater than`, `less than`, `between`, `equals`, `not equals`, `is empty`, `is not empty`
+- `_OP_KEY` / `_KEY_OP` extended for `greater_than`, `less_than`; `_KEY_OP["between_numeric"] = "between"` added for reverse-mapping
+- `FilterRow.__init__`: uses `_NUMERIC_OPS` when `field_type in ("numeric", "currency")`
+- `_rebuild_value`: `greater than` / `less than` → plain Entry; `between` on numeric/currency → two Entries without date hint
+- `get_filter()`: emits `between_numeric` operator key when field type is numeric/currency and selected op is "between"
+
+### Modified: `app.py`
+
+- Both `register_csv` call sites (Run path and Edit path) now pass `column_types=fc.get("column_types", {})`
+
+### Key design decisions recorded
+
+1. **NUMERIC/CURRENCY default to explicit opt-in** — auto-detecting numeric would misclassify SAP codes (cost centres, infotype numbers, etc.) that look like integers but must stay VARCHAR. Users must explicitly promote a column.
+2. **CURRENCY = DECIMAL(18,2), no stripping** — source data contains no thousand separators or currency symbols, so `TRY_CAST AS DECIMAL(18,2)` is sufficient. No regex stripping needed.
+3. **Date format expanded per-column** — the file-level date format in `FileOptionsDialog` is now a detection hint; the per-column dropdown in `FieldSelectorDialog` is the authoritative type. This allows different columns in the same file to have different date formats (edge case, but supported).
+4. **`between_numeric` operator key** — `FilterRow.get_filter()` emits this key (not `"between"`) when field type is numeric/currency so `_build_filter_condition` generates numeric comparisons rather than DATE comparisons. `_KEY_OP` reverse-maps it to `"between"` for pre-population on the Edit path.
+5. **Two-pronged LLM regex fix** — post-processing correction in `_extract_sql` (safety net) plus system prompt update (reduces hallucination at source). The correction only targets `REGEX_LIKE` (clearly wrong); `REGEXP_LIKE` (valid DuckDB partial-match function) is left untouched.
+
+---
+
 ## Session date: 2026-06-12
 
 ### What was built / changed

@@ -62,20 +62,30 @@ class FileOptionsDialog(tk.Toplevel):
         self.destroy()
 
 
-class FieldSelectorDialog(tk.Toplevel):
-    """Column picker shown after file options are confirmed."""
+_COL_TYPES = ["VARCHAR"] + _DATE_FORMATS + ["NUMERIC", "CURRENCY"]
 
-    def __init__(self, parent, filename, columns, samples: dict):
+
+class FieldSelectorDialog(tk.Toplevel):
+    """Column picker shown after file options are confirmed.
+
+    result: list[str] of selected column names (on OK), None on cancel
+    column_types: dict[str, str] mapping col name → lowercase type for selected cols
+    """
+
+    def __init__(self, parent, filename, columns, samples: dict,
+                 detected_dates: set = None, default_date_format: str = "Auto"):
         super().__init__(parent)
         self.title(f"Select Fields — {filename}")
         self.resizable(True, True)
         self.grab_set()
-        self.result = None  # list[str] on OK, None on cancel
-        self._columns = columns  # preserve original column names for result mapping
+        self.result = None
+        self.column_types = {}
+        self._columns = columns
+        detected_dates = detected_dates or set()
 
         ttk.Label(self, text="Choose fields to load  (at least 1 required):",
                   font=("TkDefaultFont", 10, "bold")).pack(padx=14, pady=(12, 2))
-        ttk.Label(self, text=f"{len(columns)} columns found — sample values shown for preview").pack(
+        ttk.Label(self, text=f"{len(columns)} columns — set type per field; sample values shown for preview").pack(
             padx=14, anchor=tk.W)
 
         sel_row = ttk.Frame(self)
@@ -83,28 +93,50 @@ class FieldSelectorDialog(tk.Toplevel):
         ttk.Button(sel_row, text="Select All", command=self._select_all).pack(side=tk.LEFT)
         ttk.Button(sel_row, text="Clear All", command=self._clear_all).pack(side=tk.LEFT, padx=6)
 
-        list_frame = ttk.Frame(self)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 4))
-        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        hsb = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL)
-        self._lb = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, exportselection=False,
-                               yscrollcommand=vsb.set, xscrollcommand=hsb.set,
-                               height=min(len(columns), 20), width=80,
-                               font=("Courier", 10))
-        vsb.config(command=self._lb.yview)
-        hsb.config(command=self._lb.xview)
-        self._lb.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        list_frame.rowconfigure(0, weight=1)
-        list_frame.columnconfigure(0, weight=1)
+        # Scrollable canvas for per-row widgets
+        outer = ttk.Frame(self)
+        outer.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 4))
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas)
+        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas_configure(e):
+            canvas.itemconfig(canvas_win, width=e.width)
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
 
         col_width = max((len(c) for c in columns), default=20)
+        self._check_vars: list[tk.BooleanVar] = []
+        self._type_vars: list[tk.StringVar] = []
+
         for col in columns:
+            default_type = default_date_format if col in detected_dates else "VARCHAR"
+            chk_var = tk.BooleanVar(value=True)
+            type_var = tk.StringVar(value=default_type)
+            self._check_vars.append(chk_var)
+            self._type_vars.append(type_var)
+
+            row_frame = ttk.Frame(inner)
+            row_frame.pack(fill=tk.X, pady=1)
+            ttk.Checkbutton(row_frame, variable=chk_var).pack(side=tk.LEFT)
             vals = samples.get(col, [])
             val_str = ",  ".join(f'"{v}"' for v in vals) if vals else "(no data)"
-            self._lb.insert(tk.END, f"{col:<{col_width}}    {val_str}")
-        self._lb.select_set(0, tk.END)
+            ttk.Label(row_frame, text=f"{col:<{col_width}}    {val_str}",
+                      font=("Courier", 10), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Combobox(row_frame, textvariable=type_var, values=_COL_TYPES,
+                         state="readonly", width=10).pack(side=tk.RIGHT, padx=(6, 0))
+
+        # Bind mousewheel for scroll
+        def _on_mousewheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.protocol("WM_DELETE_WINDOW", lambda: (canvas.unbind_all("<MouseWheel>"), self.destroy()))
 
         self._err_var = tk.StringVar()
         ttk.Label(self, textvariable=self._err_var, foreground="red").pack(padx=14, anchor=tk.W)
@@ -114,22 +146,28 @@ class FieldSelectorDialog(tk.Toplevel):
         ttk.Button(btn_row, text="Load", command=self._ok).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side=tk.LEFT)
 
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.wait_window()
 
     def _select_all(self):
-        self._lb.select_set(0, tk.END)
+        for v in self._check_vars:
+            v.set(True)
         self._err_var.set("")
 
     def _clear_all(self):
-        self._lb.select_clear(0, tk.END)
+        for v in self._check_vars:
+            v.set(False)
 
     def _ok(self):
-        selected = [self._columns[i] for i in self._lb.curselection()]
+        selected = [col for col, v in zip(self._columns, self._check_vars) if v.get()]
         if not selected:
             self._err_var.set("Please select at least one field.")
             return
         self.result = selected
+        self.column_types = {
+            col: type_var.get()
+            for col, chk_var, type_var in zip(self._columns, self._check_vars, self._type_vars)
+            if chk_var.get()
+        }
         self.destroy()
 
 
@@ -180,15 +218,21 @@ class FileLoaderFrame(ttk.Frame):
                 messagebox.showerror("Read Error", f"Could not read columns from {os.path.basename(path)}:\n{exc}")
                 continue
 
-            dlg2 = FieldSelectorDialog(self, os.path.basename(path), all_cols, samples)
+            detected_dates = set(self.db.detect_date_columns(path, date_format=opts["date_format"], **csv_opts))
+            dlg2 = FieldSelectorDialog(self, os.path.basename(path), all_cols, samples,
+                                       detected_dates=detected_dates,
+                                       default_date_format=opts["date_format"])
             if dlg2.result is None:
                 continue  # user cancelled field selection
 
             selected_cols = dlg2.result
+            col_types = dlg2.column_types
             try:
                 self.db.register_csv(safe_name, path, selected_columns=selected_cols,
-                                     date_format=opts["date_format"], **csv_opts)
-                self._loaded_files[safe_name] = {"path": path, "selected_columns": selected_cols, **opts}
+                                     date_format=opts["date_format"], column_types=col_types,
+                                     **csv_opts)
+                self._loaded_files[safe_name] = {"path": path, "selected_columns": selected_cols,
+                                                 "column_types": col_types, **opts}
                 delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
                 fmt_tag = f", dfmt={opts['date_format']}" if opts["date_format"] != "Auto" else ""
                 self._file_list.insert(
@@ -255,6 +299,7 @@ class FileLoaderFrame(ttk.Frame):
                 "engine": cfg["engine"],
                 "date_format": cfg.get("date_format", "Auto"),
                 "selected_columns": cfg["selected_columns"],
+                "column_types": cfg.get("column_types", {}),
             })
         return result
 
@@ -268,7 +313,8 @@ class FileLoaderFrame(ttk.Frame):
             date_format = fc.get("date_format", "Auto")
             opts = {k: fc[k] for k in ("encoding", "delimiter", "engine")}
             self._loaded_files[name] = {"path": abs_path, "selected_columns": fc["selected_columns"],
-                                        "date_format": date_format, **opts}
+                                        "date_format": date_format,
+                                        "column_types": fc.get("column_types", {}), **opts}
             n = len(fc["selected_columns"])
             delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
             fmt_tag = f", dfmt={date_format}" if date_format != "Auto" else ""
