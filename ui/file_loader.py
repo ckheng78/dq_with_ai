@@ -5,10 +5,11 @@ from tkinter import ttk, filedialog, messagebox
 _ENCODINGS = ["utf-8", "latin-1", "cp1252", "utf-16", "ascii"]
 _DELIMITERS = {"Comma (,)": ",", "Tab (\\t)": "\t", "Semicolon (;)": ";", "Pipe (|)": "|"}
 _ENGINES = ["C", "Python"]
+_DATE_FORMATS = ["Auto", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY", "DD/MM/YYYY HH:MM:SS", "MM/DD/YYYY HH:MM:SS", "DD-MM-YYYY"]
 
 
 class FileOptionsDialog(tk.Toplevel):
-    """Per-file load options: encoding, delimiter, engine."""
+    """Per-file load options: encoding, delimiter, engine, date format."""
 
     def __init__(self, parent, filename):
         super().__init__(parent)
@@ -26,17 +27,22 @@ class FileOptionsDialog(tk.Toplevel):
         ttk.Label(grid, text="Encoding:").grid(row=0, column=0, sticky=tk.W, pady=4)
         self._enc_var = tk.StringVar(value="utf-8")
         ttk.Combobox(grid, textvariable=self._enc_var, values=_ENCODINGS,
-                     state="readonly", width=16).grid(row=0, column=1, padx=8)
+                     state="readonly", width=22).grid(row=0, column=1, padx=8)
 
         ttk.Label(grid, text="Delimiter:").grid(row=1, column=0, sticky=tk.W, pady=4)
         self._delim_var = tk.StringVar(value="Comma (,)")
         ttk.Combobox(grid, textvariable=self._delim_var, values=list(_DELIMITERS.keys()),
-                     state="readonly", width=16).grid(row=1, column=1, padx=8)
+                     state="readonly", width=22).grid(row=1, column=1, padx=8)
 
         ttk.Label(grid, text="Engine:").grid(row=2, column=0, sticky=tk.W, pady=4)
         self._engine_var = tk.StringVar(value="C")
         ttk.Combobox(grid, textvariable=self._engine_var, values=_ENGINES,
-                     state="readonly", width=16).grid(row=2, column=1, padx=8)
+                     state="readonly", width=22).grid(row=2, column=1, padx=8)
+
+        ttk.Label(grid, text="Date format:").grid(row=3, column=0, sticky=tk.W, pady=4)
+        self._datefmt_var = tk.StringVar(value="Auto")
+        ttk.Combobox(grid, textvariable=self._datefmt_var, values=_DATE_FORMATS,
+                     state="readonly", width=22).grid(row=3, column=1, padx=8)
 
         btn_row = ttk.Frame(self)
         btn_row.pack(pady=12)
@@ -48,9 +54,10 @@ class FileOptionsDialog(tk.Toplevel):
 
     def _ok(self):
         self.result = {
-            "encoding": self._enc_var.get(),
-            "delimiter": _DELIMITERS[self._delim_var.get()],
-            "engine": self._engine_var.get(),
+            "encoding":    self._enc_var.get(),
+            "delimiter":   _DELIMITERS[self._delim_var.get()],
+            "engine":      self._engine_var.get(),
+            "date_format": self._datefmt_var.get(),
         }
         self.destroy()
 
@@ -166,8 +173,9 @@ class FileLoaderFrame(ttk.Frame):
                 continue  # user cancelled
 
             opts = dlg.result
+            csv_opts = {k: opts[k] for k in ("encoding", "delimiter", "engine")}
             try:
-                all_cols, samples = self.db.get_csv_sample_values(path, **opts)
+                all_cols, samples = self.db.get_csv_sample_values(path, **csv_opts)
             except Exception as exc:
                 messagebox.showerror("Read Error", f"Could not read columns from {os.path.basename(path)}:\n{exc}")
                 continue
@@ -178,13 +186,15 @@ class FileLoaderFrame(ttk.Frame):
 
             selected_cols = dlg2.result
             try:
-                self.db.register_csv(safe_name, path, selected_columns=selected_cols, **opts)
+                self.db.register_csv(safe_name, path, selected_columns=selected_cols,
+                                     date_format=opts["date_format"], **csv_opts)
                 self._loaded_files[safe_name] = {"path": path, "selected_columns": selected_cols, **opts}
                 delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
+                fmt_tag = f", dfmt={opts['date_format']}" if opts["date_format"] != "Auto" else ""
                 self._file_list.insert(
                     tk.END,
                     f"{safe_name}  [enc={opts['encoding']}, delim={delim_display}, "
-                    f"engine={opts['engine']}, fields={len(selected_cols)}/{len(all_cols)}]"
+                    f"engine={opts['engine']}, fields={len(selected_cols)}/{len(all_cols)}{fmt_tag}]"
                 )
                 self._add_preview_tab(safe_name)
             except Exception as exc:
@@ -243,6 +253,7 @@ class FileLoaderFrame(ttk.Frame):
                 "encoding": cfg["encoding"],
                 "delimiter": cfg["delimiter"],
                 "engine": cfg["engine"],
+                "date_format": cfg.get("date_format", "Auto"),
                 "selected_columns": cfg["selected_columns"],
             })
         return result
@@ -254,14 +265,17 @@ class FileLoaderFrame(ttk.Frame):
             if name in self._loaded_files:
                 continue
             abs_path = os.path.normpath(os.path.join(base_dir, fc["path"]))
+            date_format = fc.get("date_format", "Auto")
             opts = {k: fc[k] for k in ("encoding", "delimiter", "engine")}
-            self._loaded_files[name] = {"path": abs_path, "selected_columns": fc["selected_columns"], **opts}
+            self._loaded_files[name] = {"path": abs_path, "selected_columns": fc["selected_columns"],
+                                        "date_format": date_format, **opts}
             n = len(fc["selected_columns"])
             delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
+            fmt_tag = f", dfmt={date_format}" if date_format != "Auto" else ""
             self._file_list.insert(
                 tk.END,
                 f"{name}  [enc={opts['encoding']}, delim={delim_display}, "
-                f"engine={opts['engine']}, fields={n}/{n}]",
+                f"engine={opts['engine']}, fields={n}/{n}{fmt_tag}]",
             )
             self._add_preview_tab(name)
         self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)

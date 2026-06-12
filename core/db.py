@@ -5,6 +5,30 @@ _DATE_DETECT_SAMPLE = 200
 _DATE_DETECT_THRESHOLD = 0.8  # 80% of non-empty values must parse as DATE
 
 
+def _date_exprs(col: str, fmt: str) -> tuple[str, str]:
+    """Returns (detect_condition, cast_expression) SQL fragments for a given date format."""
+    qc = f'"{col}"'
+    if fmt in ("Auto", "YYYY-MM-DD"):
+        return f"TRY_CAST({qc} AS DATE) IS NOT NULL", f"TRY_CAST({qc} AS DATE)"
+    if fmt == "DD/MM/YYYY":
+        return f"TRY_STRPTIME({qc}, '%d/%m/%Y') IS NOT NULL", f"TRY_STRPTIME({qc}, '%d/%m/%Y')::DATE"
+    if fmt == "MM/DD/YYYY":
+        return f"TRY_STRPTIME({qc}, '%m/%d/%Y') IS NOT NULL", f"TRY_STRPTIME({qc}, '%m/%d/%Y')::DATE"
+    if fmt == "DD/MM/YYYY HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%d/%m/%Y %H:%M:%S') IS NOT NULL OR TRY_STRPTIME({qc}, '%d/%m/%Y') IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%d/%m/%Y %H:%M:%S'), TRY_STRPTIME({qc}, '%d/%m/%Y'))::DATE",
+        )
+    if fmt == "MM/DD/YYYY HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%m/%d/%Y %H:%M:%S') IS NOT NULL OR TRY_STRPTIME({qc}, '%m/%d/%Y') IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%m/%d/%Y %H:%M:%S'), TRY_STRPTIME({qc}, '%m/%d/%Y'))::DATE",
+        )
+    if fmt == "DD-MM-YYYY":
+        return f"TRY_STRPTIME({qc}, '%d-%m-%Y') IS NOT NULL", f"TRY_STRPTIME({qc}, '%d-%m-%Y')::DATE"
+    return f"TRY_CAST({qc} AS DATE) IS NOT NULL", f"TRY_CAST({qc} AS DATE)"
+
+
 def _csv_opts(encoding: str, delimiter: str, engine: str) -> str:
     delim_sql = "\\t" if delimiter == "\t" else delimiter.replace("'", "''")
     ignore_errors = "true" if engine == "Python" else "false"
@@ -14,12 +38,15 @@ def _csv_opts(encoding: str, delimiter: str, engine: str) -> str:
     )
 
 
-def _detect_date_columns(con, safe_path: str, columns: list[str], opts: str) -> set[str]:
-    date_cols = set()
+def _detect_date_columns(con, safe_path: str, columns: list[str], opts: str,
+                          date_format: str = "Auto") -> dict[str, str]:
+    """Returns {col_name: cast_expression} for columns that pass the date threshold."""
+    date_col_exprs: dict[str, str] = {}
     for col in columns:
+        detect_expr, cast_expr = _date_exprs(col, date_format)
         row = con.execute(f"""
             SELECT
-                COUNT(*) FILTER (WHERE TRY_CAST("{col}" AS DATE) IS NOT NULL) AS hits,
+                COUNT(*) FILTER (WHERE {detect_expr}) AS hits,
                 COUNT(*) FILTER (WHERE "{col}" IS NOT NULL AND TRIM("{col}") != '') AS non_empty
             FROM (
                 SELECT "{col}"
@@ -29,11 +56,11 @@ def _detect_date_columns(con, safe_path: str, columns: list[str], opts: str) -> 
         """).fetchone()
         hits, non_empty = row
         if non_empty > 0 and hits / non_empty >= _DATE_DETECT_THRESHOLD:
-            date_cols.add(col)
-            print(f"[DB] '{col}' detected as DATE ({hits}/{non_empty} samples matched)")
+            date_col_exprs[col] = cast_expr
+            print(f"[DB] '{col}' detected as DATE ({hits}/{non_empty} samples matched, fmt={date_format})")
         else:
             print(f"[DB] '{col}' kept as VARCHAR ({hits}/{non_empty} samples matched date)")
-    return date_cols
+    return date_col_exprs
 
 
 class Database:
@@ -82,7 +109,7 @@ class Database:
 
     def register_csv(self, name: str, path: str, *,
                      encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
-                     selected_columns: list[str] = None):
+                     date_format: str = "Auto", selected_columns: list[str] = None):
         safe_path = path.replace("\\", "/")
         opts = _csv_opts(encoding, delimiter, engine)
 
@@ -94,14 +121,14 @@ class Database:
                     f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
                 ).fetchall()
             ]
-        print(f"[DB] Registering '{name}': {len(columns)} columns (enc={encoding}, delim={delimiter!r}, engine={engine})")
-        date_cols = _detect_date_columns(self.con, safe_path, columns, opts)
+        print(f"[DB] Registering '{name}': {len(columns)} columns (enc={encoding}, delim={delimiter!r}, engine={engine}, dfmt={date_format})")
+        date_col_exprs = _detect_date_columns(self.con, safe_path, columns, opts, date_format)
 
         select_parts = []
         for col in columns:
             alias = f"{name}_{col}"
-            if col in date_cols:
-                select_parts.append(f'TRY_CAST("{col}" AS DATE) AS "{alias}"')
+            if col in date_col_exprs:
+                select_parts.append(f'{date_col_exprs[col]} AS "{alias}"')
             else:
                 select_parts.append(f'"{col}" AS "{alias}"')
 
@@ -112,7 +139,7 @@ class Database:
         self.con.execute(f'CREATE OR REPLACE VIEW "{name}" AS {base_sql}')
         self._table_base_sql[name] = base_sql
 
-        print(f"[DB] '{name}' ready. Date columns: {sorted(date_cols) or 'none'}")
+        print(f"[DB] '{name}' ready. Date columns: {sorted(date_col_exprs) or 'none'}")
         if name not in self._registered_tables:
             self._registered_tables.append(name)
 
@@ -165,14 +192,23 @@ class Database:
         val   = f.get("value", "").strip()
         val2  = f.get("value2", "").strip()
 
+        qf = f'"{field}"'
+
+        if op == "is_empty":
+            return f'({qf} IS NULL OR {qf} = \'\')'
+        if op == "is_not_empty":
+            return f'({qf} IS NOT NULL AND {qf} != \'\')'
+
         if not val:
             return None
-
-        qf = f'"{field}"'
 
         def esc(v: str) -> str:
             return v.replace("'", "''")
 
+        if op == "equals":
+            return f"{qf} = '{esc(val)}'"
+        if op == "not_equals":
+            return f"({qf} != '{esc(val)}' OR {qf} IS NULL)"
         if op == "contains":
             pattern = val.replace("*", "%").replace("?", "_")
             if "%" not in pattern and "_" not in pattern:

@@ -1,17 +1,21 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-_STRING_OPS = ["contains", "not contains", "select", "not select"]
-_DATE_OPS   = ["earlier than", "later than", "between"]
+_STRING_OPS = ["contains", "not contains", "equals", "not equals", "select", "not select", "is empty", "is not empty"]
+_DATE_OPS   = ["earlier than", "later than", "between", "is empty", "is not empty"]
 
 _OP_KEY = {
     "contains":     "contains",
     "not contains": "not_contains",
+    "equals":       "equals",
+    "not equals":   "not_equals",
     "select":       "select",
     "not select":   "not_select",
     "earlier than": "earlier_than",
     "later than":   "later_than",
     "between":      "between",
+    "is empty":     "is_empty",
+    "is not empty": "is_not_empty",
 }
 _KEY_OP = {v: k for k, v in _OP_KEY.items()}
 
@@ -65,11 +69,17 @@ class FilterRow:
         op = self._op_var.get()
         st = "normal" if self._enabled_var.get() else "disabled"
 
-        if op in ("contains", "not contains"):
+        if op in ("is empty", "is not empty"):
+            ttk.Label(self._val_frame, text="(no value needed)",
+                      foreground="gray").pack(side=tk.LEFT)
+        elif op in ("contains", "not contains"):
             ttk.Entry(self._val_frame, textvariable=self._val1,
                       width=28, state=st).pack(side=tk.LEFT)
             ttk.Label(self._val_frame, text="  (* = any chars,  ? = one char)",
                       foreground="gray").pack(side=tk.LEFT)
+        elif op in ("equals", "not equals"):
+            ttk.Entry(self._val_frame, textvariable=self._val1,
+                      width=28, state=st).pack(side=tk.LEFT)
         elif op in ("select", "not select"):
             ttk.Entry(self._val_frame, textvariable=self._val1,
                       width=38, state=st).pack(side=tk.LEFT)

@@ -82,22 +82,26 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 **CSV registration:**
 - `get_csv_columns(path, *, encoding, delimiter, engine)` → `list[str]` — reads column headers via `DESCRIBE` without registering the table
 - `get_csv_sample_values(path, *, encoding, delimiter, engine, n_rows=200, n_distinct=3)` → `(list[str], dict[str, list[str]])` — single `SELECT * LIMIT n_rows` query; returns column names plus up to 3 distinct non-empty sample values per column
-- `register_csv(name, path, *, encoding, delimiter, engine, selected_columns=None)` → lazy DuckDB view with:
+- `register_csv(name, path, *, encoding, delimiter, engine, date_format="Auto", selected_columns=None)` → lazy DuckDB view with:
   - Columns filtered to `selected_columns` if provided; otherwise all columns used
   - All columns read as VARCHAR first (`all_varchar=true`) to prevent type misdetection
-  - Each column auto-detected for DATE via `TRY_CAST` sampling (≥80% of non-empty values must parse)
+  - Each column date-detected via `_detect_date_columns` using the specified `date_format` (≥80% threshold)
   - All columns renamed `tablename_fieldname` immediately at view creation — globally unique across tables
-  - Encoding, delimiter, and engine (C = standard / Python = `ignore_errors=true`) passed through to DuckDB
+  - Encoding, delimiter, engine, and date_format passed through to DuckDB cast expressions
   - Base SELECT SQL stored in `_table_base_sql[name]` for filter reapplication
+- `_date_exprs(col, fmt)` → `(detect_condition, cast_expression)` — maps a format name to the DuckDB SQL fragments used for detection and view creation; supports `Auto` / `YYYY-MM-DD` (`TRY_CAST`), `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS` (`COALESCE` of timestamp + date strptime), `DD-MM-YYYY`
+- `_detect_date_columns(con, safe_path, columns, opts, date_format)` → `dict[str, str]` — returns `{col: cast_expression}` for columns that exceed the threshold; previously returned `set[str]`
 
 **Filtering:**
 - `get_column_types(table_name)` → `{col_name: 'date' | 'string'}` from `DESCRIBE`
 - `apply_filters(filters)` — rebuilds each individual table's view as `SELECT * FROM (base_sql) WHERE <conditions>`; tables with no active filters are restored to bare `base_sql`
 - `apply_join_filters(filters)` — stores conditions in `_join_filter_conditions`; calls `_rebuild_joined_table`
 - `_build_filter_condition(f)` (static) — generates a single SQL WHERE fragment from a filter dict:
+  - `is_empty` / `is_not_empty`: `(field IS NULL OR field = '')` / `(field IS NOT NULL AND field != '')` — no value needed; handled before the empty-value guard
+  - `equals` / `not_equals`: exact string match; `not_equals` includes `OR field IS NULL`
   - `contains` / `not_contains`: LIKE/NOT LIKE with `*`→`%`, `?`→`_` wildcard translation
   - `select` / `not_select`: IN / NOT IN with comma-separated value list
-  - `earlier_than` / `later_than` / `between`: `CAST(... AS DATE)` comparisons
+  - `earlier_than` / `later_than` / `between`: `CAST(... AS DATE)` comparisons (user inputs ISO `YYYY-MM-DD`; column is already typed DATE in the view)
 
 **Derived fields:**
 - `apply_derived_fields(derived)` — stores `(name, expression)` pairs in `_join_derived_exprs`; calls `_rebuild_joined_table`
@@ -145,12 +149,12 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ## UI Module Responsibilities
 
 ### `ui/file_loader.py`
-- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, selected_columns}` for workflow save
-- `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread)
-- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python)
+- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, date_format, selected_columns}` for workflow save
+- `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread); reads `date_format` with `"Auto"` fallback for old workflows
+- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python), date format (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY)
 - `FieldSelectorDialog` — shown after options are confirmed; lists all CSV columns in a multi-select Listbox with up to 3 distinct sample values per row for preview; **Select All** / **Clear All** buttons; validates at least 1 field selected; columns are shown as `{name:<padded>  "val1",  "val2",  "val3"`
-- Load flow: options dialog → `db.get_csv_sample_values()` → field selector → `db.register_csv(..., selected_columns=...)`
-- Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`
+- Load flow: options dialog → `db.get_csv_sample_values()` (csv opts only, no date_format) → field selector → `db.register_csv(..., date_format=..., selected_columns=...)`
+- Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`; appends `dfmt=...` when date format is not Auto
 - Preview Treeview uses pixel-width columns (`len(col) * 9`) with `stretch=False` + horizontal scrollbar
 
 ### `ui/filter_editor.py`
@@ -159,9 +163,11 @@ Contains two panels that share `FilterRow`:
 **`FilterRow`** — one row per field:
 - Checkbox enables/disables the filter; operator and value inputs are grayed out when disabled
 - Operator options depend on field type:
-  - String: `contains`, `not contains`, `select`, `not select`
-  - Date: `earlier than`, `later than`, `between`
+  - String: `contains`, `not contains`, `equals`, `not equals`, `select`, `not select`, `is empty`, `is not empty`
+  - Date: `earlier than`, `later than`, `between`, `is empty`, `is not empty`
 - Value area rebuilds on operator change:
+  - is empty / is not empty → label `(no value needed)`, no entry
+  - equals / not equals → plain Entry
   - contains / not contains → Entry + wildcard hint `(* = any chars, ? = one char)`
   - select / not select → Entry + `(comma-separated)` hint
   - earlier/later than → Entry + `YYYY-MM-DD` hint
@@ -282,6 +288,7 @@ System prompts are in config so they can be tuned without touching code.
       "encoding": "utf-8",
       "delimiter": ",",
       "engine": "C",
+      "date_format": "DD/MM/YYYY",
       "selected_columns": ["PA0000_PERNR", "PA0000_EMAIL"]
     }
   ],
@@ -334,7 +341,9 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Relative file paths in workflow JSON**: Stored as `os.path.relpath(abs_path, base_dir)` so workflows survive a folder rename or move.
 - **Violation CSV per rule**: Generated alongside the HTML detail report; no row cap (unlike the HTML which has `report_max_detail_rows`). Users can open directly in Excel for full investigation.
 - **Background threads**: Long DuckDB operations run in `threading.Thread`; results posted back via `self.after(0, ...)` to keep Tkinter responsive. Exception variables captured as lambda defaults (`lambda e=exc: ...`) to avoid Python 3 closure scoping bugs.
-- **Per-file load options**: Encoding, delimiter, and engine are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
+- **Per-file load options**: Encoding, delimiter, engine, and date format are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
+- **Per-file date format**: Users specify the date format stored in each CSV (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY) at load time. `Auto` uses `TRY_CAST(col AS DATE)` (ISO only). Slash formats use `TRY_STRPTIME`; the HH:MM:SS variants use `COALESCE(strptime_ts, strptime_date)::DATE` to handle mixed date-only and datetime values in the same column. Once columns are cast to DATE in the view, filter conditions always compare against ISO `YYYY-MM-DD` input — no changes needed to filter SQL. `date_format` is saved in the workflow JSON; old workflows without the key default to `"Auto"`.
+- **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `is_empty`/`is_not_empty` are evaluated before the empty-value guard in `_build_filter_condition` since they need no value.
 
 ---
 

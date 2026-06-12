@@ -187,7 +187,8 @@ class App(tk.Tk):
                     self._db.register_csv(
                         fc["name"], abs_path,
                         encoding=fc["encoding"], delimiter=fc["delimiter"],
-                        engine=fc["engine"], selected_columns=fc["selected_columns"],
+                        engine=fc["engine"], date_format=fc.get("date_format", "Auto"),
+                        selected_columns=fc["selected_columns"],
                     )
 
                 if workflow.get("pre_join_filters"):
@@ -249,7 +250,8 @@ class App(tk.Tk):
                     self._db.register_csv(
                         fc["name"], abs_path,
                         encoding=fc["encoding"], delimiter=fc["delimiter"],
-                        engine=fc["engine"], selected_columns=fc["selected_columns"],
+                        engine=fc["engine"], date_format=fc.get("date_format", "Auto"),
+                        selected_columns=fc["selected_columns"],
                     )
 
                 if workflow.get("pre_join_filters"):

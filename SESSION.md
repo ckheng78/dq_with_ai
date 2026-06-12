@@ -1,5 +1,51 @@
 # Session Notes — DQ with AI
 
+## Session date: 2026-06-12
+
+### What was built / changed
+
+### Modified: `ui/filter_editor.py`
+
+- Added `equals` / `not equals` to `_STRING_OPS` — exact single-value match; same Entry widget as `contains` but no wildcard hint
+- Added `is empty` / `is not empty` to both `_STRING_OPS` and `_DATE_OPS` — no value entry; shows `(no value needed)` label
+- Updated `_OP_KEY` / `_KEY_OP` for all four new operators
+- `_rebuild_value()` handles `is empty`/`is not empty` first (no widget), then `equals`/`not equals` (plain Entry)
+
+### Modified: `core/db.py`
+
+- `_build_filter_condition`: `is_empty`/`is_not_empty` handled before the `if not val` guard (they need no value); `equals`/`not_equals` added with `IS NULL` guard on negation to match existing `not_contains`/`not_select` behaviour
+- Added `_date_exprs(col, fmt)` → `(detect_condition, cast_expression)` — maps each supported format name to DuckDB SQL fragments; `DD/MM/YYYY HH:MM:SS` / `MM/DD/YYYY HH:MM:SS` use `COALESCE(strptime_ts, strptime_date)::DATE` to handle mixed date-only and datetime values
+- `_detect_date_columns` now accepts `date_format` parameter and returns `dict[str, str]` (`{col: cast_expression}`) instead of `set[str]`; uses `_date_exprs` for the detection COUNT query
+- `register_csv` accepts `date_format="Auto"` keyword arg; passes it to `_detect_date_columns`; uses the returned dict directly in the view's SELECT (replaces the hardcoded `TRY_CAST(col AS DATE)`)
+- Supported formats: `Auto`, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS`, `DD-MM-YYYY`
+
+### Modified: `ui/file_loader.py`
+
+- Added `_DATE_FORMATS` list
+- `FileOptionsDialog`: added "Date format" dropdown (row 3); combobox widths widened to 22 to fit longer format strings
+- `_pick_files`: splits `csv_opts` (encoding/delimiter/engine) from `date_format` before calling `get_csv_sample_values`; passes `date_format` separately to `register_csv`; listbox entry appends `dfmt=...` tag when format is not Auto
+- `get_file_configs`: includes `date_format` in returned dict
+- `populate_from_workflow`: reads `date_format` with `"Auto"` fallback for backward compat; stores in `_loaded_files`; shows `dfmt=` tag in listbox
+
+### Modified: `app.py`
+
+- Both `register_csv` calls (Run and Edit paths) now pass `date_format=fc.get("date_format", "Auto")`
+
+### Modified: `data/PA0000.csv`, `data/PA0001.csv`, `data/PA0002.csv`
+
+- PA0000 dates reformatted to `DD/MM/YYYY`
+- PA0001 dates reformatted to `MM/DD/YYYY HH:MM:SS` (with ` 00:00:00` suffix)
+- PA0002 dates (BEGDA, ENDDA, GBDAT) reformatted to `DD-MM-YYYY`; empty GBDAT on row 12 preserved
+
+### Key design decisions recorded
+
+1. **User-specified date format (no auto-detection)** — avoids the fundamental ambiguity between `dd/mm` and `mm/dd` when all day/month values ≤ 12. User selects per file at load time; `Auto` retains existing ISO-only behaviour.
+2. **Filter UI unchanged for date values** — once a column is cast to `DATE` in the view, `CAST('YYYY-MM-DD' AS DATE)` comparisons work regardless of the original CSV format. No hint label or input handling needed.
+3. **`is_empty`/`is_not_empty` before the `not val` guard** — these operators need no value, so they must be evaluated before the `if not val: return None` early exit in `_build_filter_condition`.
+4. **`DD-MM-YYYY` added on demand** — not in the original plan; added because a test file used dash-separated dates. Single `_date_exprs` branch with `'%d-%m-%Y'` strptime pattern.
+
+---
+
 ## Session date: 2026-06-11 (continued)
 
 ## What was built / changed
