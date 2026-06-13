@@ -29,7 +29,6 @@ class LLMClient:
         self.endpoint = config["endpoint"].rstrip("/")
         self.model = config["model"]
         self.timeout = config["timeout_seconds"]
-        self.system_prompt_join = config["system_prompt_join"]
         self.system_prompt_rule = config["system_prompt_rule"]
 
     def _call(self, system_prompt: str, user_message: str) -> str | None:
@@ -84,14 +83,6 @@ class LLMClient:
                 print(f"[LLM] Column validation rejected: {candidate!r} not in valid columns")
                 return False
         return True
-
-    def translate_join(self, nl_instruction: str, table_names: list[str], col_hints: dict[str, list[str]]) -> str:
-        schema_info = "\n".join(
-            f"Table '{t}': columns = {', '.join(col_hints.get(t, []))}"
-            for t in table_names
-        )
-        user_message = f"{schema_info}\n\nInstruction: {nl_instruction}"
-        return self._call(self.system_prompt_join, user_message)
 
     def translate_rule(self, nl_rule: str, col_hints: list[str]) -> str:
         schema_info = f"Table 'joined_table': columns = {', '.join(col_hints)}"

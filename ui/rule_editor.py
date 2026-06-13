@@ -198,25 +198,12 @@ class RuleEditorFrame(ttk.Frame):
         self._translate_btn.config(state=tk.DISABLED)
 
         def worker():
-            import time
-            max_tries = 5
-            for attempt in range(1, max_tries + 1):
-                try:
-                    col_hints = self.db.get_columns("joined_table")
-                    sql = self.llm.translate_rule(nl, col_hints)
-                except Exception as exc:
-                    self.after(0, lambda e=exc: self._on_error(str(e)))
-                    return
-                if sql.strip().upper().startswith("SELECT"):
-                    self.after(0, lambda s=sql: self._show_sql(s))
-                    return
-                print(f"[LLM] Attempt {attempt}/{max_tries}: SQL does not start with SELECT — got: {sql[:120]!r}")
-                if attempt < max_tries:
-                    time.sleep(5)
-            self.after(0, lambda: self._on_error(
-                f"LLM failed to produce a valid SELECT statement after {max_tries} attempts.\n"
-                "Please rephrase your rule description and try again."
-            ))
+            try:
+                col_hints = self.db.get_columns("joined_table")
+                sql = self.llm.translate_rule(nl, col_hints)
+                self.after(0, lambda s=sql: self._show_sql(s))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._on_error(str(e)))
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -86,16 +86,6 @@ class Database:
         self._join_filter_conditions: list[str] = []
         self._join_derived_exprs: list[tuple[str, str]] = []
 
-    def get_csv_columns(self, path: str, *,
-                        encoding: str = "utf-8", delimiter: str = ",", engine: str = "C") -> list[str]:
-        safe_path = path.replace("\\", "/")
-        opts = _csv_opts(encoding, delimiter, engine)
-        return [
-            row[0] for row in self.con.execute(
-                f"DESCRIBE SELECT * FROM read_csv_auto('{safe_path}', {opts})"
-            ).fetchall()
-        ]
-
     def get_csv_sample_values(self, path: str, *,
                                encoding: str = "utf-8", delimiter: str = ",", engine: str = "C",
                                n_rows: int = 200, n_distinct: int = 3) -> tuple[list[str], dict[str, list[str]]]:
@@ -199,10 +189,6 @@ class Database:
         result = self.con.execute(f'SELECT * FROM "{table_name}" LIMIT {n}').fetchall()
         cols = [desc[0] for desc in self.con.description]
         return cols, result
-
-    def get_sample_rows(self, table_name: str, n: int = 3) -> list[dict]:
-        cols, rows = self.get_preview(table_name, n)
-        return [dict(zip(cols, row)) for row in rows]
 
     def get_column_types(self, table_name: str) -> dict[str, str]:
         """Returns {col_name: 'date' | 'numeric' | 'currency' | 'string'} for a registered table."""
