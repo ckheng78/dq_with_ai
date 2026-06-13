@@ -1,5 +1,40 @@
 # Session Notes — DQ with AI
 
+## Session date: 2026-06-13 (branch: v2_enhancements)
+
+### What was built / changed
+
+### Modified: `ui/file_loader.py`
+
+- `_pick_files`: changed `get_csv_sample_values` call to `n_rows=5000, n_distinct=16` — samples more rows while staying bounded (one CSV read, reads only the first 5 000 rows of the file)
+- After `register_csv`, builds `distinct_values` dict: `{f"{safe_name}_{col}": sorted(vals) for col, vals in samples.items() if col in selected_cols and 0 < len(vals) <= 15}` — `n_distinct=16` (limit+1) means `len==16` signals "too many distinct values", those columns are excluded
+- `FieldSelectorDialog` preview label sliced to `vals[:3]` — display unchanged even though sample now holds up to 16 values
+- `_proceed`: merges `distinct_values` across all loaded files and passes as second argument to `on_loaded` callback (callback signature changed from `(table_names)` to `(table_names, distinct_values)`)
+
+### Modified: `app.py`
+
+- New state `self._wf_distinct_values: dict = {}` initialised in `__init__` and reset in `_restart`
+- `_on_files_loaded(self, table_names, distinct_values)`: stores `_wf_distinct_values`; passes to `filter_editor.set_tables`
+- `_on_joined`: passes `self._wf_distinct_values` to `postjoin_filter_editor.set_joined_table` — both filter panels share the same pre-computed dict, no additional DB queries
+
+### Modified: `ui/filter_editor.py`
+
+- `FilterRow.__init__`: new `distinct_values: list = None` param; stored as `self._distinct_values`
+- `FilterRow._rebuild_value`: for `equals`/`not equals`, if `self._distinct_values` is non-empty renders a `state="readonly"` Combobox (values pre-sorted from file load sample); otherwise plain Entry unchanged
+- `FilterRow._set_val_state`: when enabling a row (`state="normal"`), Combobox children receive `state="readonly"` instead of `"normal"` to preserve the read-only constraint
+- `FilterEditorFrame.set_tables(table_names, distinct_values=None)`: stores dict; passes `distinct_values.get(field, [])` for string-type fields to each `FilterRow`; date/numeric/currency fields receive `[]` (no dropdown)
+- `PostJoinFilterFrame.set_joined_table(table_names, distinct_values=None)`: same pattern; reuses the dict passed from `app.py` — avoids querying the joined view (which would force a join execution over the full source files)
+
+### Key design decisions recorded
+
+1. **Sample at file-load time, not at filter-panel time** — querying `SELECT DISTINCT col FROM view` on a 4 GB CSV view streams the entire file for every string column; doing it at load time within a bounded `LIMIT 5000` read keeps the filter panel instant.
+2. **`n_distinct=16` (limit+1) sentinel** — collecting one extra value lets the caller detect "more than 15 distinct values exist" without reading beyond the sample. `len(vals) == 16` means skip; `len(vals) <= 15` means show dropdown.
+3. **Combobox state is `"readonly"`** — prevents users from typing values not in the list; the dropdown is a complete enumeration from the sample, not just a hint. Falls back to plain Entry when distinct values are absent (high-cardinality columns, date/numeric columns, Edit path).
+4. **Edit path receives no distinct values** — `set_tables` and `set_joined_table` default to `distinct_values=None` → plain Entry for all `equals`/`not equals` rows. Acceptable: saved filter values are still pre-populated correctly via `_val1.set()` on the shared StringVar.
+5. **Single dict shared between both filter panels** — `App._wf_distinct_values` is set once in `_on_files_loaded` and passed to both `FilterEditorFrame` and `PostJoinFilterFrame`; no duplication or re-computation.
+
+---
+
 ## Session date: 2026-06-12 (continued)
 
 ### What was built / changed

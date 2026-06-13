@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Detail Report: MASSN</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+    h1 { color: #2c3e50; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 8px; }
+    .description { background: #fef9e7; border-left: 4px solid #f39c12; padding: 10px 16px; margin-bottom: 20px; }
+    .sql-block { background: #2c3e50; color: #ecf0f1; padding: 14px; font-family: monospace; font-size: 0.9em; border-radius: 4px; white-space: pre-wrap; margin-bottom: 20px; }
+    .warning { background: #fdecea; border-left: 4px solid #e74c3c; padding: 10px 16px; margin-bottom: 16px; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.88em; }
+    th { background: #2c3e50; color: #fff; padding: 8px 12px; text-align: left; white-space: nowrap; }
+    td { padding: 7px 12px; border-bottom: 1px solid #ddd; word-break: break-word; max-width: 300px; }
+    tr:nth-child(even) td { background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <h1>Detail Report: MASSN</h1>
+  <div class="meta">Generated: 2026-06-13 09:12:30</div>
+
+  <div class="description">
+    <strong>Rule:</strong> find all records where age is greater than 30 and pa0000_massn_text contains only 6 alphabets
+  </div>
+
+  <div class="sql-block">SELECT * FROM joined_table WHERE AGE &gt; 30 AND REGEXP_MATCHES(PA0000_MASSN_TEXT, &#39;^[a-zA-Z]{6}$&#39;)</div>
+
+  <p><strong>Violations found: 11</strong></p>
+
+  
+
+  
+  <table>
+    <thead>
+      <tr>
+        
+        <th>PA0000_MANDT</th>
+        
+        <th>PA0000_PERNR</th>
+        
+        <th>PA0000_BEGDA</th>
+        
+        <th>PA0000_ENDDA</th>
+        
+        <th>PA0000_SEQNR</th>
+        
+        <th>PA0000_MASSN</th>
+        
+        <th>PA0000_MASSN_TEXT</th>
+        
+        <th>PA0000_MASSG</th>
+        
+        <th>PA0000_MASSG_TEXT</th>
+        
+        <th>PA0000_STAT2</th>
+        
+        <th>PA0000_STAT2_TEXT</th>
+        
+        <th>PA0002_MANDT</th>
+        
+        <th>PA0002_PERNR</th>
+        
+        <th>PA0002_BEGDA</th>
+        
+        <th>PA0002_ENDDA</th>
+        
+        <th>PA0002_SEQNR</th>
+        
+        <th>PA0002_ANRED</th>
+        
+        <th>PA0002_VORNA</th>
+        
+        <th>PA0002_NACHN</th>
+        
+        <th>PA0002_GESCH</th>
+        
+        <th>PA0002_GESCH_TEXT</th>
+        
+        <th>PA0002_GBDAT</th>
+        
+        <th>PA0002_FAMST</th>
+        
+        <th>PA0002_FAMST_TEXT</th>
+        
+        <th>PA0002_NATIO</th>
+        
+        <th>AGE</th>
+        
+      </tr>
+    </thead>
+    <tbody>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000002</td>
+        
+        <td>2014-12-04</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000002</td>
+        
+        <td>2014-09-04</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Ms</td>
+        
+        <td>Sarah</td>
+        
+        <td>Mitchell</td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1990-07-22</td>
+        
+        <td>S</td>
+        
+        <td>Single</td>
+        
+        <td>GB</td>
+        
+        <td>36</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000003</td>
+        
+        <td>2008-02-19</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000003</td>
+        
+        <td>2004-11-17</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mr</td>
+        
+        <td>Mohammed</td>
+        
+        <td>Al-Rashid</td>
+        
+        <td>1</td>
+        
+        <td>Male</td>
+        
+        <td>1978-11-05</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>SA</td>
+        
+        <td>48</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000006</td>
+        
+        <td>2025-07-08</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000006</td>
+        
+        <td>2025-01-20</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Ms</td>
+        
+        <td>Priya</td>
+        
+        <td>Sharma</td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1995-04-12</td>
+        
+        <td>S</td>
+        
+        <td>Single</td>
+        
+        <td>IN</td>
+        
+        <td>31</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000008</td>
+        
+        <td>2016-06-09</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000008</td>
+        
+        <td>2011-06-27</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mrs</td>
+        
+        <td>Amanda</td>
+        
+        <td>Jones</td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1988-12-03</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>GB</td>
+        
+        <td>38</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000009</td>
+        
+        <td>2020-02-03</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000009</td>
+        
+        <td>2019-04-02</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mr</td>
+        
+        <td>Liam</td>
+        
+        <td>O&#39;Brien</td>
+        
+        <td>1</td>
+        
+        <td>Male</td>
+        
+        <td>1993-08-15</td>
+        
+        <td>S</td>
+        
+        <td>Single</td>
+        
+        <td>IE</td>
+        
+        <td>33</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000010</td>
+        
+        <td>2014-06-20</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000010</td>
+        
+        <td>2012-10-03</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Ms</td>
+        
+        <td>Fatima</td>
+        
+        <td>Hassan</td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1987-02-20</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>NG</td>
+        
+        <td>39</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000011</td>
+        
+        <td>2009-09-04</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000011</td>
+        
+        <td>2003-12-16</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mr</td>
+        
+        <td>Thomas</td>
+        
+        <td>Müller</td>
+        
+        <td>1</td>
+        
+        <td>Male</td>
+        
+        <td>1980-05-07</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>DE</td>
+        
+        <td>46</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000013</td>
+        
+        <td>2013-10-07</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000013</td>
+        
+        <td>2010-03-22</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mr</td>
+        
+        <td>Kevin</td>
+        
+        <td>Okonkwo</td>
+        
+        <td>1</td>
+        
+        <td>Male</td>
+        
+        <td>1986-03-31</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>NG</td>
+        
+        <td>40</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000016</td>
+        
+        <td>2023-11-27</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000016</td>
+        
+        <td>2022-04-18</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Ms</td>
+        
+        <td>Grace</td>
+        
+        <td>Tan</td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1994-11-18</td>
+        
+        <td>S</td>
+        
+        <td>Single</td>
+        
+        <td>MY</td>
+        
+        <td>32</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000017</td>
+        
+        <td>2006-06-07</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000017</td>
+        
+        <td>2004-12-10</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Mr</td>
+        
+        <td>Andrew</td>
+        
+        <td>MacGregor</td>
+        
+        <td>1</td>
+        
+        <td>Male</td>
+        
+        <td>1979-04-23</td>
+        
+        <td>M</td>
+        
+        <td>Married</td>
+        
+        <td>GB</td>
+        
+        <td>47</td>
+        
+      </tr>
+      
+      <tr>
+        
+        <td>100</td>
+        
+        <td>00000020</td>
+        
+        <td>2019-04-22</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>01</td>
+        
+        <td>Hiring</td>
+        
+        <td>01</td>
+        
+        <td>New Employee</td>
+        
+        <td>3</td>
+        
+        <td>Active</td>
+        
+        <td>100</td>
+        
+        <td>00000020</td>
+        
+        <td>2018-02-08</td>
+        
+        <td>9999-12-31</td>
+        
+        <td>000</td>
+        
+        <td>Ms</td>
+        
+        <td>Yuki</td>
+        
+        <td></td>
+        
+        <td>2</td>
+        
+        <td>Female</td>
+        
+        <td>1989-06-16</td>
+        
+        <td>S</td>
+        
+        <td>Single</td>
+        
+        <td>JP</td>
+        
+        <td>37</td>
+        
+      </tr>
+      
+    </tbody>
+  </table>
+  
+</body>
+</html>

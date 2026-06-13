@@ -27,10 +27,12 @@ _KEY_OP["between_numeric"] = "between"  # numeric between displays the same as d
 class FilterRow:
     """One filter row for a single field."""
 
-    def __init__(self, parent, field_name: str, field_type: str, table_name: str):
+    def __init__(self, parent, field_name: str, field_type: str, table_name: str,
+                 distinct_values: list = None):
         self.field_name = field_name
         self.field_type = field_type
         self.table_name = table_name
+        self._distinct_values = distinct_values or []
 
         self.frame = ttk.Frame(parent)
 
@@ -68,7 +70,10 @@ class FilterRow:
     def _set_val_state(self, state: str):
         for child in self._val_frame.winfo_children():
             try:
-                child.config(state=state)
+                if isinstance(child, ttk.Combobox) and state == "normal":
+                    child.config(state="readonly")
+                else:
+                    child.config(state=state)
             except tk.TclError:
                 pass
 
@@ -87,8 +92,13 @@ class FilterRow:
             ttk.Label(self._val_frame, text="  (* = any chars,  ? = one char)",
                       foreground="gray").pack(side=tk.LEFT)
         elif op in ("equals", "not equals"):
-            ttk.Entry(self._val_frame, textvariable=self._val1,
-                      width=28, state=st).pack(side=tk.LEFT)
+            if self._distinct_values:
+                st_cb = "readonly" if self._enabled_var.get() else "disabled"
+                ttk.Combobox(self._val_frame, textvariable=self._val1,
+                             values=self._distinct_values, state=st_cb, width=28).pack(side=tk.LEFT)
+            else:
+                ttk.Entry(self._val_frame, textvariable=self._val1,
+                          width=28, state=st).pack(side=tk.LEFT)
         elif op in ("select", "not select"):
             ttk.Entry(self._val_frame, textvariable=self._val1,
                       width=38, state=st).pack(side=tk.LEFT)
@@ -179,7 +189,8 @@ class FilterEditorFrame(ttk.Frame):
     def _on_mousewheel(self, event):
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def set_tables(self, table_names: list[str]):
+    def set_tables(self, table_names: list[str], distinct_values: dict = None):
+        self._distinct_values = distinct_values or {}
         for row in self._filter_rows:
             row.frame.destroy()
         for w in self._rows_frame.winfo_children():
@@ -192,7 +203,8 @@ class FilterEditorFrame(ttk.Frame):
                           fill=tk.X, pady=(8, 1), padx=4)
             col_types = self.db.get_column_types(table)
             for field, ftype in col_types.items():
-                row = FilterRow(self._rows_frame, field, ftype, table)
+                dv = self._distinct_values.get(field, []) if ftype == "string" else []
+                row = FilterRow(self._rows_frame, field, ftype, table, distinct_values=dv)
                 row.frame.pack(fill=tk.X, padx=4, pady=1)
                 self._filter_rows.append(row)
 
@@ -277,8 +289,9 @@ class PostJoinFilterFrame(ttk.Frame):
     def _on_mousewheel(self, event):
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def set_joined_table(self, table_names: list[str]):
+    def set_joined_table(self, table_names: list[str], distinct_values: dict = None):
         """Populate filter rows from joined_table columns, grouped by original table prefix."""
+        self._distinct_values = distinct_values or {}
         for row in self._filter_rows:
             row.frame.destroy()
         for w in self._rows_frame.winfo_children():
@@ -296,7 +309,8 @@ class PostJoinFilterFrame(ttk.Frame):
                       font=("TkDefaultFont", 9, "bold"), foreground="#444").pack(
                           fill=tk.X, pady=(8, 1), padx=4)
             for field, ftype in table_cols.items():
-                row = FilterRow(self._rows_frame, field, ftype, "joined_table")
+                dv = self._distinct_values.get(field, []) if ftype == "string" else []
+                row = FilterRow(self._rows_frame, field, ftype, "joined_table", distinct_values=dv)
                 row.frame.pack(fill=tk.X, padx=4, pady=1)
                 self._filter_rows.append(row)
 

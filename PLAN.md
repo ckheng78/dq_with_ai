@@ -166,7 +166,10 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
   - **Select All** / **Clear All** buttons; validates at least 1 field selected
   - `result`: `list[str]` of selected column names; `column_types`: `dict[str, str]` of col → type for selected columns
   - Accepts `detected_dates: set` and `default_date_format: str` constructor params
-- Load flow: options dialog → `db.detect_date_columns()` + `db.get_csv_sample_values()` → field/type selector → `db.register_csv(..., column_types=..., selected_columns=...)`
+- Load flow: options dialog → `db.detect_date_columns()` + `db.get_csv_sample_values(n_rows=5000, n_distinct=16)` → field/type selector → `db.register_csv(..., column_types=..., selected_columns=...)`
+- After registration, builds `distinct_values` dict (`tablename_fieldname → sorted list`) for every selected column that yielded ≤ 15 distinct values in the 5 000-row sample; stored in `_loaded_files[name]["distinct_values"]`; `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more of the file
+- `FieldSelectorDialog` preview label shows `vals[:3]` even though the sample now collects up to 16 distinct values
+- `_proceed` merges `distinct_values` across all loaded files and passes the merged dict as the second argument to the `on_loaded` callback
 - Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`; appends `dfmt=...` when date format is not Auto
 - Preview Treeview uses pixel-width columns (`len(col) * 9`) with `stretch=False` + horizontal scrollbar
 
@@ -174,6 +177,7 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 Contains two panels that share `FilterRow`:
 
 **`FilterRow`** — one row per field:
+- Accepts optional `distinct_values: list[str]` constructor param; stored as `self._distinct_values`
 - Checkbox enables/disables the filter; operator and value inputs are grayed out when disabled
 - Operator options depend on field type:
   - String: `contains`, `not contains`, `equals`, `not equals`, `select`, `not select`, `is empty`, `is not empty`
@@ -181,23 +185,26 @@ Contains two panels that share `FilterRow`:
   - Numeric / Currency: `greater than`, `less than`, `between`, `equals`, `not equals`, `is empty`, `is not empty`
 - Value area rebuilds on operator change:
   - is empty / is not empty → label `(no value needed)`, no entry
-  - equals / not equals → plain Entry
+  - equals / not equals → `state="readonly"` Combobox pre-populated with `distinct_values` if available (VARCHAR fields with ≤ 15 distinct values from the load-time sample); falls back to plain Entry when `distinct_values` is empty
   - contains / not contains → Entry + wildcard hint `(* = any chars, ? = one char)`
   - select / not select → Entry + `(comma-separated)` hint
   - earlier/later than → Entry + `YYYY-MM-DD` hint
   - greater than / less than → plain Entry (numeric value)
   - between (date) → two Entries joined by "to" + `YYYY-MM-DD` hint
   - between (numeric/currency) → two Entries joined by "to", no hint label
+- `_set_val_state`: when re-enabling a Combobox child, sets `state="readonly"` (not `"normal"`) to preserve the read-only constraint
 - `get_filter()` emits operator key `between_numeric` (not `between`) when field type is numeric/currency and operator is "between"; `_KEY_OP` maps `between_numeric` → `"between"` for pre-population on Edit path
+- All value reads use `self._val1` / `self._val2` (StringVar) — `get_filter()` and `load_filters()` work identically for both Entry and Combobox since both bind to the same StringVar
 
 **`FilterEditorFrame`** (tab 2 — Pre-Join Filters):
 - Scrollable canvas of `FilterRow` widgets grouped by table name with bold section headers
 - "Next: Define Join →" button at top-right
+- `set_tables(table_names, distinct_values=None)` — accepts pre-computed distinct values dict; passes `distinct_values.get(field, [])` to each string-type `FilterRow`
 - On proceed: calls `db.apply_filters(filters)` — rebuilds each individual table's view
 - `load_filters(filters)` — pre-populates from saved workflow (matches by field name, sets operator + values)
 
 **`PostJoinFilterFrame`** (tab 4 — Post-Join Filters):
-- Same structure as `FilterEditorFrame`; `set_joined_table(table_names)` queries `joined_table` and groups fields by `tablename_` prefix
+- Same structure as `FilterEditorFrame`; `set_joined_table(table_names, distinct_values=None)` queries `joined_table` and groups fields by `tablename_` prefix; accepts the same pre-computed `distinct_values` dict from the file load step
 - "Next: Derived Fields →" button at top-right
 - On proceed: calls `db.apply_join_filters(filters)` — stores conditions; `_rebuild_joined_table` applies them
 - `load_filters(filters)` — same pre-population logic as `FilterEditorFrame`
@@ -369,6 +376,7 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Per-column type selection**: Users set each column's type individually in `FieldSelectorDialog` via a dropdown: `VARCHAR`, any date format, `NUMERIC`, or `CURRENCY`. All fields default to `VARCHAR` or the detected date format; users must explicitly promote a column to `NUMERIC` or `CURRENCY`. This prevents numeric-looking SAP codes (e.g., cost centre, infotype) from being misinterpreted as numbers. `NUMERIC` casts to `DOUBLE`; `CURRENCY` casts to `DECIMAL(18,2)` (no thousands separator or symbol stripping required since source data doesn't use them).
 - **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `greater than` / `less than` / `between` added for NUMERIC and CURRENCY columns; `between` on a numeric/currency field emits the `between_numeric` operator key so `_build_filter_condition` uses `TRY_CAST(... AS DOUBLE)` comparisons rather than DATE comparisons.
 - **LLM regex function correction**: `_extract_sql` silently replaces `REGEX_LIKE` → `REGEXP_MATCHES` after extraction. `REGEX_LIKE` does not exist in DuckDB; the LLM occasionally hallucinates it from MySQL/Oracle training data. The system prompt was also updated with an explicit DuckDB regex function reference (`REGEXP_MATCHES`, `REGEXP_LIKE`, `REGEXP_EXTRACT`) and a worked example to reduce the hallucination at the source.
+- **Filter dropdown for low-cardinality VARCHAR columns**: When `equals` or `not equals` is selected on a string field with ≤ 15 distinct values, the value input becomes a `state="readonly"` Combobox showing the known values. Values are collected at file-load time from a 5 000-row sample (`get_csv_sample_values(n_rows=5000, n_distinct=16)`); querying `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more. This avoids any additional DB queries when the filter panel opens — critical for 4 GB source files where a full `SELECT DISTINCT` on a CSV view would stream the entire file. Derived columns and the Edit path receive no distinct values and fall back to plain Entry. The same dict is reused for both Pre-Join and Post-Join filter panels, stored in `App._wf_distinct_values`.
 
 ---
 
@@ -378,7 +386,7 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 1. Launch app — `WorkflowLauncher` appears (no saved workflows → only "+ New Workflow" shown)
 2. Click "+ New Workflow" → tab 1 enabled
 3. Load two CSVs (set encoding/delimiter/engine; pick a subset of fields); confirm preview shows only the selected `tablename_fieldname` columns
-4. In Pre-Join Filters: enable a `contains` filter on a string field and a date range filter; confirm "Next: Define Join →" proceeds
+4. In Pre-Join Filters: enable a `contains` filter on a string field; for a string field with few values (e.g. STATUS), switch to `equals` — confirm a Combobox appears with the known values; select one and confirm the filter applies correctly; enable a date range filter; confirm "Next: Define Join →" proceeds
 5. In Define Join: select master table; define conditions; execute; confirm joined table preview; "Next: Post-Join Filters →" is enabled
 6. In Post-Join Filters: enable a filter on a joined field; confirm "Next: Derived Fields →" proceeds
 7. In Derived Fields: test each category (String, Date with TODAY, Numeric, Conditional, Regex, Adv); "Next: Define Rules →" populates field list with derived columns

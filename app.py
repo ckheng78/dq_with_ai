@@ -38,6 +38,7 @@ class App(tk.Tk):
         self._wf_derived: list[dict] = []
         self._wf_rules: list[dict] = []
         self._current_workflow_name: str = ""
+        self._wf_distinct_values: dict = {}  # col → sorted distinct values, from file load sample
 
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill=tk.BOTH, expand=True)
@@ -80,8 +81,9 @@ class App(tk.Tk):
 
     # ---- Manual workflow tab callbacks ----
 
-    def _on_files_loaded(self, table_names: list[str]):
-        self._filter_editor.set_tables(table_names)
+    def _on_files_loaded(self, table_names: list[str], distinct_values: dict):
+        self._wf_distinct_values = distinct_values
+        self._filter_editor.set_tables(table_names, distinct_values)
         self._join_editor.set_tables(table_names)
         self._nb.tab(1, state="normal")
         self._nb.select(1)
@@ -93,7 +95,7 @@ class App(tk.Tk):
 
     def _on_joined(self, join_config: dict):
         self._wf_join = join_config
-        self._postjoin_filter_editor.set_joined_table(self._db.get_table_names())
+        self._postjoin_filter_editor.set_joined_table(self._db.get_table_names(), self._wf_distinct_values)
         self._nb.tab(3, state="normal")
         self._nb.select(3)
 
@@ -336,6 +338,7 @@ class App(tk.Tk):
         self._wf_derived = []
         self._wf_rules = []
         self._current_workflow_name = ""
+        self._wf_distinct_values = {}
 
         for i in range(7):
             self._nb.tab(i, state="disabled")

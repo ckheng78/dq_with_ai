@@ -126,7 +126,7 @@ class FieldSelectorDialog(tk.Toplevel):
             row_frame.pack(fill=tk.X, pady=1)
             ttk.Checkbutton(row_frame, variable=chk_var).pack(side=tk.LEFT)
             vals = samples.get(col, [])
-            val_str = ",  ".join(f'"{v}"' for v in vals) if vals else "(no data)"
+            val_str = ",  ".join(f'"{v}"' for v in vals[:3]) if vals else "(no data)"
             ttk.Label(row_frame, text=f"{col:<{col_width}}    {val_str}",
                       font=("Courier", 10), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
             ttk.Combobox(row_frame, textvariable=type_var, values=_COL_TYPES,
@@ -213,7 +213,7 @@ class FileLoaderFrame(ttk.Frame):
             opts = dlg.result
             csv_opts = {k: opts[k] for k in ("encoding", "delimiter", "engine")}
             try:
-                all_cols, samples = self.db.get_csv_sample_values(path, **csv_opts)
+                all_cols, samples = self.db.get_csv_sample_values(path, **csv_opts, n_rows=5000, n_distinct=16)
             except Exception as exc:
                 messagebox.showerror("Read Error", f"Could not read columns from {os.path.basename(path)}:\n{exc}")
                 continue
@@ -231,8 +231,16 @@ class FileLoaderFrame(ttk.Frame):
                 self.db.register_csv(safe_name, path, selected_columns=selected_cols,
                                      date_format=opts["date_format"], column_types=col_types,
                                      **csv_opts)
+                # Build distinct-value hints for filter dropdowns (only cols with ≤15 distinct values
+                # from the 5000-row sample; len==16 means "more than 15", so skip those).
+                distinct_values = {
+                    f"{safe_name}_{col}": sorted(vals)
+                    for col, vals in samples.items()
+                    if col in selected_cols and 0 < len(vals) <= 15
+                }
                 self._loaded_files[safe_name] = {"path": path, "selected_columns": selected_cols,
-                                                 "column_types": col_types, **opts}
+                                                 "column_types": col_types,
+                                                 "distinct_values": distinct_values, **opts}
                 delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
                 fmt_tag = f", dfmt={opts['date_format']}" if opts["date_format"] != "Auto" else ""
                 self._file_list.insert(
@@ -330,4 +338,7 @@ class FileLoaderFrame(ttk.Frame):
         if len(self._loaded_files) < 2:
             messagebox.showinfo("Two Tables Required", "Please load at least 2 CSV files to define a join.")
             return
-        self.on_loaded(list(self._loaded_files.keys()))
+        merged_distinct: dict = {}
+        for cfg in self._loaded_files.values():
+            merged_distinct.update(cfg.get("distinct_values", {}))
+        self.on_loaded(list(self._loaded_files.keys()), merged_distinct)
