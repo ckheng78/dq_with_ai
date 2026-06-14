@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Data Quality Summary Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+    h1 { color: #2c3e50; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 24px; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #2c3e50; color: #fff; padding: 10px 14px; text-align: left; }
+    td { padding: 9px 14px; border-bottom: 1px solid #ddd; }
+    tr:nth-child(even) td { background: #f5f5f5; }
+    .pass { color: #27ae60; font-weight: bold; }
+    .fail { color: #e74c3c; font-weight: bold; }
+    .total-row td { font-weight: bold; background: #ecf0f1; }
+  </style>
+</head>
+<body>
+  <h1>Data Quality Summary Report</h1>
+  <div class="meta">Generated: 2026-06-14 11:46:28 &nbsp;|&nbsp; Total rows in dataset: 27</div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Rule</th>
+        <th>Description</th>
+        <th>Violations</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      <tr>
+        <td>1</td>
+        <td>MASSN</td>
+        <td>find all records where pa0000_massn_text contains exactly 6 alphabets and pa0000_stat2 is &#39;3&#39;</td>
+        <td>20</td>
+        <td class="fail">
+          FAIL
+        </td>
+      </tr>
+      
+      <tr class="total-row">
+        <td colspan="3">Total Violations</td>
+        <td>20</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

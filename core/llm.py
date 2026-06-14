@@ -30,6 +30,7 @@ class LLMClient:
         self.model = config["model"]
         self.timeout = config["timeout_seconds"]
         self.system_prompt_rule = config["system_prompt_rule"]
+        self.options = {"temperature": 0, "num_predict": 200, **config.get("options", {})}
 
     def _call(self, system_prompt: str, user_message: str) -> str | None:
         url = f"{self.endpoint}/api/chat"
@@ -40,11 +41,7 @@ class LLMClient:
                 {"role": "user", "content": user_message},
             ],
             "stream": False,
-            "options": {
-                "temperature": 0,
-                "num_predict": 200,
-                "stop": [";", "```", "\n\n"],
-            },
+            "options": {**self.options, "stop": [";", "```", "\n\n"]},
         }
         print(f"[LLM] POST {url}")
         print(f"[LLM] model={self.model!r}  timeout={self.timeout}s")
