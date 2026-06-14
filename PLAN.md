@@ -38,9 +38,7 @@ dq_with_ai/
 │   ├── rules.py               # Run all rules; return RuleResult dataclasses
 │   └── reporter.py            # Jinja2 HTML + violation CSV generation
 ├── persistence/
-│   ├── workflow_store.py      # save/load_all for workflows JSON files (overwrites by name)
-│   ├── join_store.py          # Legacy — no longer called by main app
-│   └── rule_store.py          # Legacy — no longer called by main app
+│   └── workflow_store.py      # save/load_all for workflows JSON files (overwrites by name)
 ├── templates/
 │   ├── summary.html.j2
 │   └── detail.html.j2
@@ -48,8 +46,8 @@ dq_with_ai/
 │   └── settings.json          # Ollama endpoint, model, paths, system prompts
 ├── data/                      # User drops CSVs here
 ├── workflows/                 # Saved workflow JSON files (one per named workflow)
-├── rules/                     # Legacy saved DQ rule JSON files
-├── joins/                     # Legacy saved join rule JSON files
+├── rules/                     # Legacy saved DQ rule JSON files (no longer written by app)
+├── joins/                     # Legacy saved join rule JSON files (no longer written by app)
 └── reports/                   # Generated HTML, violation CSVs, joined CSV export
 ```
 
@@ -80,7 +78,6 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ### `core/db.py`
 
 **CSV registration:**
-- `get_csv_columns(path, *, encoding, delimiter, engine)` → `list[str]` — reads column headers via `DESCRIBE` without registering the table
 - `get_csv_sample_values(path, *, encoding, delimiter, engine, n_rows=200, n_distinct=3)` → `(list[str], dict[str, list[str]])` — single `SELECT * LIMIT n_rows` query; returns column names plus up to 3 distinct non-empty sample values per column
 - `detect_date_columns(path, *, encoding, delimiter, engine, date_format="Auto")` → `list[str]` — public helper that runs `_detect_date_columns` against the file and returns names of columns passing the threshold; used to pre-populate the per-column type picker in `FieldSelectorDialog`
 - `register_csv(name, path, *, encoding, delimiter, engine, date_format="Auto", selected_columns=None, column_types=None)` → lazy DuckDB view with:
@@ -117,13 +114,15 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 - `execute_join(sql)` → stores `_join_base_sql = sql`; resets `_join_filter_conditions` and `_join_derived_exprs`; creates `joined_table` view
 - `execute_rule(sql)` → returns `(cols, rows)` of violating rows
 - `get_preview(table, n=100)` → `(cols, rows)`
+- `get_joined_preview(n=100)` → delegates to `get_preview("joined_table", n)`
+- `get_joined_row_count()` → `int` — `SELECT COUNT(*) FROM joined_table`
 - `export_joined_csv(path)` → `COPY (SELECT * FROM joined_table) TO path`
 
 ### `core/llm.py`
 - Reads Ollama config from `settings.json`
 - `translate_rule(nl, col_hints)` → SQL string (rules only; joins no longer use LLM)
-- POSTs to `/api/chat` with a `messages` list (`role: system` + `role: user`); `stream: false`; hardcoded `options`: `temperature: 0`, `num_predict: 200`, `stop: [";", "```", "\n\n"]`
-- Raw text extracted from `data["message"]["content"]` (not `data["response"]`)
+- POSTs to `/api/chat` with a `messages` list (`role: system` + `role: user`); `stream: false`; hardcoded `options`: `temperature: 0`, `num_predict: 200`, `stop: [";", "```", "\n\n"]` (the `options` block in `settings.json` is not read by `LLMClient`)
+- `_call(system_prompt, user_message)` → extracts raw text from `data["message"]["content"]`, calls `_extract_sql` internally, and returns the extracted SQL string (or `None`)
 - `_extract_sql(text)` → `str | None` — post-processes the raw LLM response:
   1. Strips ` ```sql ` and ` ``` ` fences via `re.sub`
   2. Finds the first `\bSELECT\b` match; returns `None` if absent
@@ -131,25 +130,25 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
   4. Returns `None` if the result contains more than one `SELECT` (rejects back-to-back queries)
   5. Replaces `REGEX_LIKE` → `REGEXP_MATCHES` (case-insensitive) — `REGEX_LIKE` does not exist in DuckDB; LLM occasionally hallucinates this MySQL/Oracle name
 - `_validate_sql_columns(sql, valid_columns)` → `bool` — extracts SAP-style column candidates matching `\bPA\w+\b` and checks each against the set of uppercased valid column names; prints a rejection message and returns `False` on the first unknown candidate
-- `translate_rule` contains the retry loop: up to 5 attempts; calls `_call` then `_extract_sql`; validates `SELECT` guard; validates column names via `_validate_sql_columns`; sleeps 5 s between failed attempts; raises `LLMConnectionError` after all attempts are exhausted
+- `translate_rule` contains the retry loop: up to 5 attempts; calls `_call` (which internally calls `_extract_sql`); validates `SELECT` guard; validates column names via `_validate_sql_columns`; sleeps 5 s between failed attempts; raises `LLMConnectionError` after all attempts are exhausted
 - Full debug logging printed to terminal: URL, model, prompt, raw response, extracted SQL
 - Raises `LLMConnectionError` on unreachable endpoint or timeout
 
 ### `core/rules.py`
-- `RuleResult` dataclass: `{name, nl_description, sql, violation_count, violating_rows}`
+- `RuleResult` dataclass: `{name, nl_description, sql, violation_count, columns, violating_rows}`
 - `run_all_rules(rules, db)` → `list[RuleResult]`
 
 ### `core/reporter.py`
-- `generate_summary(results, output_dir)` → timestamped HTML path
-- `generate_detail(result, output_dir)` → timestamped HTML path
+- `generate_summary(results, total_rows, output_dir, templates_dir)` → timestamped HTML path; passes `total_rows` to the template for context
+- `generate_detail(result, max_rows, output_dir, templates_dir)` → timestamped HTML path; truncates displayed rows to `max_rows` (from `config["ui"]["report_max_detail_rows"]`)
 - `generate_violation_csv(result, output_dir)` → timestamped CSV path (`violations_<rule>_<timestamp>.csv`); writes all violating rows with no row cap; uses stdlib `csv`
 
 ### `persistence/workflow_store.py`
 - `save(workflow, workflows_dir)` → writes `workflows/<safe_name>.json`; overwrites if same name; sets `created_at` on first save, always updates `updated_at`
 - `load_all(workflows_dir)` → list of all workflow dicts sorted by `updated_at` descending
 
-### `persistence/join_store.py` / `rule_store.py` (legacy)
-- No longer called by the main app; kept for reference only
+### Legacy persistence
+- `join_store.py` and `rule_store.py` have been deleted from the codebase; legacy `joins/` and `rules/` directories remain on disk but are no longer written by the app
 
 ---
 
@@ -276,14 +275,15 @@ Contains `_build_expression` plus two classes:
     "endpoint": "http://localhost:11434",
     "model": "my_qwen",
     "timeout_seconds": 60,
-    "system_prompt_join": "(unused — joins are now built visually)",
-    "system_prompt_rule": "You are a DuckDB SQL generator. You output one SELECT statement and nothing else. No explanation. No markdown. No preamble. No comments. No extra conditions. Only the exact SQL that answers the user request.\n\nExample:\nUser: find all records where STATUS = 'A'\nSQL: SELECT * FROM joined_table WHERE STATUS = 'A'\n\nNow generate SQL for the user request below. Output only the SQL."
+    "options": { "temperature": 0.1, "top_p": 0.9 },
+    "system_prompt_rule": "You are a DuckDB SQL generator. ..."
   },
   "paths": {
     "data_dir": "data",
     "rules_dir": "rules",
     "joins_dir": "joins",
-    "reports_dir": "reports"
+    "reports_dir": "reports",
+    "workflows_dir": "workflows"
   },
   "ui": {
     "preview_row_limit": 100,
@@ -291,6 +291,10 @@ Contains `_build_expression` plus two classes:
   }
 }
 ```
+
+Notes:
+- `ollama.options` is present in `settings.json` but is **not read by `LLMClient`**; the payload options (`temperature: 0`, `num_predict: 200`, stop tokens) are hardcoded in `llm.py`
+- `system_prompt_join` has been removed from `settings.json` (joins are now built visually)
 
 System prompts are in config so they can be tuned without touching code.
 
@@ -363,7 +367,7 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Visual join builder (no LLM for joins)**: Joins are defined via dropdown conditions (left field / operator / right field) rather than natural language. This is deterministic, instant, and avoids LLM reliability issues for a structured operation.
 - **LLM only for rules**: The LLM (Ollama `my_qwen`) is used only to translate natural language DQ rules into SQL. The SQL is always shown to the user before execution. A "Regenerate" button allows re-prompting.
 - **`/api/chat` instead of `/api/generate`**: Using the chat endpoint with a `messages` array (system + user roles) prevents KV context bleed between calls — `/api/generate` carries a `context` token array in its response that bleeds prior state into subsequent requests. Temperature is hardcoded to `0` in the payload `options` to eliminate stochastic sampling; `num_predict: 200` and stop tokens `[";", "```", "\n\n"]` keep output short and terminate at natural SQL boundaries.
-- **LLM retry on invalid SQL**: The retry loop lives inside `translate_rule` (not in the UI layer). After each `_call`, the result is validated: `_extract_sql` must return a non-None value; it must start with `SELECT`; `_validate_sql_columns` must pass. Failure on any check sleeps 5 s and retries, up to 5 total attempts. Connection/timeout errors abort immediately. `LLMConnectionError` is raised after all attempts are exhausted.
+- **LLM retry on invalid SQL**: The retry loop lives inside `translate_rule` (not in the UI layer). `_call` posts to the Ollama API and internally calls `_extract_sql`, returning the extracted SQL (or `None`). The retry loop validates: the returned SQL must be non-None; it must start with `SELECT`; `_validate_sql_columns` must pass. Failure on any check sleeps 5 s and retries, up to 5 total attempts. Connection/timeout errors abort immediately. `LLMConnectionError` is raised after all attempts are exhausted.
 - **`_validate_sql_columns` for SAP column hallucination**: Qwen was generating syntactically valid SQL referencing column names that do not exist in `joined_table` (memorised SAP infotype fields from training data). `_validate_sql_columns` extracts all `\bPA\w+\b` token candidates (SAP-style column names) and rejects the SQL if any are absent from the valid column set, triggering a retry.
 - **`_extract_sql` hardening**: Strips fences via `re.sub` (not `re.search` on fence content, which missed unclosed fences); truncates at the *first* semicolon (not last) to prevent accepting two statements; returns `None` (not empty string) on extraction failure so callers can distinguish no-SQL from empty-SQL; rejects output containing more than one `SELECT` to prevent paired wrong+correct query responses from slipping through.
 - **Workflow as single unit of persistence**: All six steps (files, pre-join filters, join, post-join filters, derived fields, rules) are saved together in one named JSON. Overwrite-on-save keeps the `workflows/` directory clean. The old separate `joins/` and `rules/` saves are legacy.
