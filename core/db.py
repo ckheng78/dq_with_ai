@@ -339,6 +339,9 @@ class Database:
     def get_joined_row_count(self) -> int:
         return self.con.execute("SELECT COUNT(*) FROM joined_table").fetchone()[0]
 
+    def get_table_row_count(self, name: str) -> int:
+        return self.con.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+
     def export_joined_csv(self, output_path: str):
         safe_path = output_path.replace("\\", "/")
         self.con.execute(f"COPY (SELECT * FROM joined_table) TO '{safe_path}' (HEADER, DELIMITER ',')")

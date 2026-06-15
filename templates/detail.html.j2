@@ -26,7 +26,22 @@
 
   <div class="sql-block">{{ result.sql }}</div>
 
-  <p><strong>Violations found: {{ result.violation_count }}</strong></p>
+  {% set not_impacted = result.total_rows - result.violation_count %}
+  {% set ratio = (not_impacted / result.total_rows * 100) if result.total_rows > 0 else 0 %}
+  <table style="width:auto; margin-bottom:20px; border:1px solid #ddd;">
+    <tr>
+      <th style="background:#2c3e50;color:#fff;padding:8px 16px;">Source Table</th>
+      <th style="background:#2c3e50;color:#fff;padding:8px 16px;">Total Records</th>
+      <th style="background:#2c3e50;color:#fff;padding:8px 16px;">Violations</th>
+      <th style="background:#2c3e50;color:#fff;padding:8px 16px;">Not Impacted</th>
+    </tr>
+    <tr>
+      <td style="padding:8px 16px;">{{ result.source_table }}</td>
+      <td style="padding:8px 16px; text-align:right;">{{ result.total_rows }}</td>
+      <td style="padding:8px 16px; text-align:right; color:#e74c3c; font-weight:bold;">{{ result.violation_count }}</td>
+      <td style="padding:8px 16px; text-align:right; color:#27ae60; font-weight:bold;">{{ not_impacted }} ({{ "%.1f"|format(ratio) }}%)</td>
+    </tr>
+  </table>
 
   {% if truncated %}
   <div class="warning">

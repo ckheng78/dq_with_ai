@@ -130,7 +130,7 @@ class FieldSelectorDialog(tk.Toplevel):
             ttk.Label(row_frame, text=f"{col:<{col_width}}    {val_str}",
                       font=("Courier", 10), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
             ttk.Combobox(row_frame, textvariable=type_var, values=_COL_TYPES,
-                         state="readonly", width=10).pack(side=tk.RIGHT, padx=(6, 0))
+                         state="readonly", width=22).pack(side=tk.RIGHT, padx=(6, 0))
 
         # Bind mousewheel for scroll
         def _on_mousewheel(e):

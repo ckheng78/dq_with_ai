@@ -1,0 +1,135 @@
+{
+  "name": "MASSN",
+  "files": [
+    {
+      "name": "PA0000",
+      "path": "data/PA0000.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "engine": "C",
+      "date_format": "Auto",
+      "selected_columns": [
+        "MANDT",
+        "PERNR",
+        "BEGDA",
+        "ENDDA",
+        "SEQNR",
+        "MASSN",
+        "MASSN_TEXT",
+        "MASSG",
+        "MASSG_TEXT",
+        "STAT2",
+        "STAT2_TEXT"
+      ],
+      "column_types": {
+        "MANDT": "VARCHAR",
+        "PERNR": "VARCHAR",
+        "BEGDA": "DD/MM/YYYY",
+        "ENDDA": "DD/MM/YYYY",
+        "SEQNR": "VARCHAR",
+        "MASSN": "VARCHAR",
+        "MASSN_TEXT": "VARCHAR",
+        "MASSG": "VARCHAR",
+        "MASSG_TEXT": "VARCHAR",
+        "STAT2": "VARCHAR",
+        "STAT2_TEXT": "VARCHAR"
+      }
+    },
+    {
+      "name": "PA0001",
+      "path": "data/PA0001.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "engine": "C",
+      "date_format": "Auto",
+      "selected_columns": [
+        "MANDT",
+        "PERNR",
+        "BEGDA",
+        "ENDDA",
+        "SEQNR",
+        "BUKRS",
+        "BUKRS_TEXT",
+        "WERKS",
+        "WERKS_TEXT",
+        "BTRTL",
+        "PERSG",
+        "PERSG_TEXT",
+        "PERSK",
+        "PERSK_TEXT",
+        "KOSTL",
+        "ORGEH",
+        "PLANS",
+        "ABKRS",
+        "ABKRS_TEXT"
+      ],
+      "column_types": {
+        "MANDT": "VARCHAR",
+        "PERNR": "VARCHAR",
+        "BEGDA": "MM/DD/YYYY HH:MM:SS",
+        "ENDDA": "MM/DD/YYYY HH:MM:SS",
+        "SEQNR": "VARCHAR",
+        "BUKRS": "VARCHAR",
+        "BUKRS_TEXT": "VARCHAR",
+        "WERKS": "VARCHAR",
+        "WERKS_TEXT": "VARCHAR",
+        "BTRTL": "VARCHAR",
+        "PERSG": "VARCHAR",
+        "PERSG_TEXT": "VARCHAR",
+        "PERSK": "VARCHAR",
+        "PERSK_TEXT": "VARCHAR",
+        "KOSTL": "VARCHAR",
+        "ORGEH": "VARCHAR",
+        "PLANS": "VARCHAR",
+        "ABKRS": "VARCHAR",
+        "ABKRS_TEXT": "VARCHAR"
+      }
+    }
+  ],
+  "pre_join_filters": [],
+  "join": {
+    "tables": [
+      "PA0000",
+      "PA0001"
+    ],
+    "master": "PA0000",
+    "sql": "SELECT * FROM \"PA0000\"\nLEFT JOIN \"PA0001\" ON \"PA0000_PERNR\" = \"PA0001_PERNR\" AND \"PA0000_BEGDA\" >= \"PA0001_BEGDA\" AND \"PA0000_BEGDA\" <= \"PA0001_ENDDA\"",
+    "conditions": [
+      {
+        "secondary": "PA0001",
+        "conditions": [
+          {
+            "bool_op": null,
+            "left": "PA0000_PERNR",
+            "op": "=",
+            "right": "PA0001_PERNR"
+          },
+          {
+            "bool_op": "AND",
+            "left": "PA0000_BEGDA",
+            "op": ">=",
+            "right": "PA0001_BEGDA"
+          },
+          {
+            "bool_op": "AND",
+            "left": "PA0000_BEGDA",
+            "op": "<=",
+            "right": "PA0001_ENDDA"
+          }
+        ]
+      }
+    ]
+  },
+  "post_join_filters": [],
+  "derived_fields": [],
+  "rules": [
+    {
+      "name": "MASSN",
+      "nl_description": "find all records where pa0000_stat2 = '3'",
+      "sql": "SELECT * FROM joined_table WHERE pa0000_stat2 = '3'"
+    }
+  ],
+  "created_at": "2026-06-15T22:00:33.297239",
+  "updated_at": "2026-06-15T22:00:33.297239",
+  "version": 1
+}
