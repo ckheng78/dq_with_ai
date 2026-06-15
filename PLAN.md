@@ -40,8 +40,8 @@ dq_with_ai/
 ├── persistence/
 │   └── workflow_store.py      # save/load_all for workflows JSON files (overwrites by name)
 ├── templates/
-│   ├── summary.html.j2
-│   └── detail.html.j2
+│   ├── summary.html.j2        # Rule-level summary: #, Rule, Description, Source Table, Total Records, Violations, Not Impacted, Status
+│   └── detail.html.j2         # Per-rule detail: stats table (Source Table / Total Records / Violations / Not Impacted) + violating rows
 ├── config/
 │   └── settings.json          # Ollama endpoint, model, paths, system prompts
 ├── data/                      # User drops CSVs here
@@ -116,6 +116,7 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 - `get_preview(table, n=100)` → `(cols, rows)`
 - `get_joined_preview(n=100)` → delegates to `get_preview("joined_table", n)`
 - `get_joined_row_count()` → `int` — `SELECT COUNT(*) FROM joined_table`
+- `get_table_row_count(name)` → `int` — `SELECT COUNT(*) FROM "<name>"`; used to look up individual table row counts
 - `export_joined_csv(path)` → `COPY (SELECT * FROM joined_table) TO path`
 
 ### `core/llm.py`
@@ -135,12 +136,15 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 - Raises `LLMConnectionError` on unreachable endpoint or timeout
 
 ### `core/rules.py`
-- `RuleResult` dataclass: `{name, nl_description, sql, violation_count, columns, violating_rows}`
-- `run_all_rules(rules, db)` → `list[RuleResult]`
+- `RuleResult` dataclass: `{name, nl_description, sql, violation_count, columns, violating_rows, source_table, total_rows}`
+  - `source_table`: the registered table name inferred from the rule's result columns (longest-prefix match against table names)
+  - `total_rows`: row count of the joined table at rule execution time
+- `_infer_source_table(columns, table_names)` → `str` — sorts table names longest-first to avoid prefix collisions (e.g. `PA0` vs `PA0000`); counts how many result columns start with `{table}_`; returns the table with the highest count, or `""` if none match
+- `run_all_rules(rules, db)` → `list[RuleResult]` — fetches `joined_row_count` once before the loop; infers `source_table` per rule from result column names
 
 ### `core/reporter.py`
-- `generate_summary(results, total_rows, output_dir, templates_dir)` → timestamped HTML path; passes `total_rows` to the template for context
-- `generate_detail(result, max_rows, output_dir, templates_dir)` → timestamped HTML path; truncates displayed rows to `max_rows` (from `config["ui"]["report_max_detail_rows"]`)
+- `generate_summary(results, total_rows, output_dir, templates_dir)` → timestamped HTML path; passes `total_rows` (joined table count) to the template for the meta line; per-rule `total_rows` and `source_table` come from each `RuleResult`
+- `generate_detail(result, max_rows, output_dir, templates_dir)` → timestamped HTML path; truncates displayed rows to `max_rows` (from `config["ui"]["report_max_detail_rows"]`); shows a stats table with Source Table, Total Records, Violations, Not Impacted (count + %)
 - `generate_violation_csv(result, output_dir)` → timestamped CSV path (`violations_<rule>_<timestamp>.csv`); writes all violating rows with no row cap; uses stdlib `csv`
 
 ### `persistence/workflow_store.py`
@@ -160,7 +164,7 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 - `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python), date format (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY) — date format here is the detection hint used to pre-populate the per-column type picker
 - `FieldSelectorDialog` — shown after options are confirmed; rebuilt as a scrollable canvas of per-row widgets (replaces single Listbox):
   - Each row: checkbox (include/exclude) + column name + sample values label + type dropdown
-  - Type dropdown values: `VARCHAR`, `Auto`, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS`, `DD-MM-YYYY`, `NUMERIC`, `CURRENCY`
+  - Type dropdown values: `VARCHAR`, `Auto`, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS`, `DD-MM-YYYY`, `NUMERIC`, `CURRENCY`; combobox `width=22` to prevent text clipping on Windows (where the dropdown arrow consumes space inside the widget width)
   - Detected date columns pre-populated with the file-level date format (from `FileOptionsDialog`); all other columns pre-populated with `VARCHAR`
   - **Select All** / **Clear All** buttons; validates at least 1 field selected
   - `result`: `list[str]` of selected column names; `column_types`: `dict[str, str]` of col → type for selected columns

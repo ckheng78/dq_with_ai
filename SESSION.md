@@ -1,5 +1,47 @@
 # Session Notes — DQ with AI
 
+## Session date: 2026-06-15 (branch: v3_cleanup)
+
+### What was built / changed
+
+### Modified: `core/db.py`
+
+- Added `get_table_row_count(name: str) -> int` — `SELECT COUNT(*) FROM "<name>"`; used by `run_all_rules` to look up individual table row counts (available but currently unused in favour of joined count)
+
+### Modified: `core/rules.py`
+
+- `RuleResult` dataclass gains two new fields: `source_table: str = ""` and `total_rows: int = 0`
+- New `_infer_source_table(columns, table_names)` → `str` — sorts table names longest-first to avoid prefix collisions (e.g. `PA0` vs `PA0000`); counts how many result columns start with `{table}_`; returns the dominant table name or `""` if no match
+- `run_all_rules`: fetches `joined_row_count` once before the rule loop; infers `source_table` per rule from result column names; sets `total_rows = joined_row_count` for every rule (total records shown in reports is the post-join row count, not the individual source table count)
+
+### Modified: `templates/summary.html.j2`
+
+- Added four new columns to the rule table: **Source Table**, **Total Records**, **Violations**, **Not Impacted** (count + %)
+- "Not Impacted" = Total Records − Violations, displayed as `N (X.X%)`
+- Meta line updated to "Total rows in joined dataset"
+- "Total Violations" footer row spans adjusted to match new column count
+- Added `.num` CSS class for right-aligned numeric cells
+
+### Modified: `templates/detail.html.j2`
+
+- Replaced the plain "Violations found: N" line with a stats summary table showing **Source Table**, **Total Records**, **Violations** (red), **Not Impacted** (green, count + %)
+
+### Modified: `ui/file_loader.py`
+
+- `FieldSelectorDialog`: per-column type combobox `width` increased from `10` to `22` — fixes text clipping on Windows where the dropdown arrow consumes space inside the widget width budget; "DD/MM/YYYY HH:MM:SS" (19 chars) was being cut to "DD/MM/YYYY" on Windows
+
+### Modified: `PLAN.md`
+
+- Updated to reflect all of the above changes
+
+### Key design decisions recorded
+
+1. **Total Records = joined row count, not source table count** — initial implementation used the individual source table's pre-join row count; revised to use the joined table row count so all rules share the same denominator and the "not impacted" ratio is consistent with the dataset being analysed
+2. **Source table inferred from column name prefixes** — since all columns are renamed `tablename_fieldname` at load time, the dominant source table for a rule can be detected without storing it explicitly in the rule definition; longest-prefix match prevents false matches when one table name is a prefix of another
+3. **Combobox width fix is Windows-only in practice** — macOS renders the dropdown arrow outside the `width` budget; Windows renders it inside, shrinking the visible text area. Setting `width=22` is safe on both platforms
+
+---
+
 ## Session date: 2026-06-13 (branch: v2_enhancements)
 
 ### What was built / changed
