@@ -57,7 +57,7 @@ dq_with_ai/
 
 On launch, `WorkflowLauncher` appears as a modal dialog before any tab is accessible:
 
-- **+ New Workflow** → enables tab 1, user walks through all tabs manually
+- **+ New Workflow** → enables tab 1 (multi-file) or tab 3 (single-file), user walks through remaining tabs
 - **Run** (saved workflow) → headless background execution (load files → filters → join → derived fields → rules) with a progress dialog; lands on Reports tab
 - **Edit** (saved workflow) → same DB operations in background, then all tabs pre-populated; lands on tab 6 (Rules)
 
@@ -65,9 +65,16 @@ After rules run, user is prompted to save/overwrite the workflow by name. All si
 
 ## Tab Flow (New Workflow path)
 
+**Multi-file (2+ CSVs):**
 ```
 1. Load Files → 2. Pre-Join Filters → 3. Define Join → 4. Post-Join Filters → 5. Derived Fields → 6. Define Rules → 7. Reports
 ```
+
+**Single-file (1 CSV):**
+```
+1. Load Files → 4. Post-Join Filters → 5. Derived Fields → 6. Define Rules → 7. Reports
+```
+Tabs 2 (Pre-Join Filters) and 3 (Define Join) are skipped automatically. The join is executed as `SELECT * FROM "table"` immediately when the user clicks "Next" in the Load Files tab.
 
 Each tab is disabled until the preceding step completes. "Next" navigation buttons sit at the top-right of each panel.
 
@@ -173,6 +180,7 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 - After registration, builds `distinct_values` dict (`tablename_fieldname → sorted list`) for every selected column that yielded ≤ 15 distinct values in the 5 000-row sample; stored in `_loaded_files[name]["distinct_values"]`; `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more of the file
 - `FieldSelectorDialog` preview label shows `vals[:3]` even though the sample now collects up to 16 distinct values
 - `_proceed` merges `distinct_values` across all loaded files and passes the merged dict as the second argument to the `on_loaded` callback
+- `_update_next_btn()` — updates "Next" button state and label together; called after every file add/remove and after `populate_from_workflow`; label is `"Next: Post-Join Filters →"` when ≤ 1 file is loaded, `"Next: Pre-Join Filters →"` when 2+ files are loaded; default (disabled, no files) shows `"Next: Post-Join Filters →"`
 - Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`; appends `dfmt=...` when date format is not Auto
 - Preview Treeview uses pixel-width columns (`len(col) * 9`) with `stretch=False` + horizontal scrollbar
 
@@ -385,15 +393,16 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `greater than` / `less than` / `between` added for NUMERIC and CURRENCY columns; `between` on a numeric/currency field emits the `between_numeric` operator key so `_build_filter_condition` uses `TRY_CAST(... AS DOUBLE)` comparisons rather than DATE comparisons.
 - **LLM regex function correction**: `_extract_sql` silently replaces `REGEX_LIKE` → `REGEXP_MATCHES` after extraction. `REGEX_LIKE` does not exist in DuckDB; the LLM occasionally hallucinates it from MySQL/Oracle training data. The system prompt was also updated with an explicit DuckDB regex function reference (`REGEXP_MATCHES`, `REGEXP_LIKE`, `REGEXP_EXTRACT`) and a worked example to reduce the hallucination at the source.
 - **Filter dropdown for low-cardinality VARCHAR columns**: When `equals` or `not equals` is selected on a string field with ≤ 15 distinct values, the value input becomes a `state="readonly"` Combobox showing the known values. Values are collected at file-load time from a 5 000-row sample (`get_csv_sample_values(n_rows=5000, n_distinct=16)`); querying `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more. This avoids any additional DB queries when the filter panel opens — critical for 4 GB source files where a full `SELECT DISTINCT` on a CSV view would stream the entire file. Derived columns and the Edit path receive no distinct values and fall back to plain Entry. The same dict is reused for both Pre-Join and Post-Join filter panels, stored in `App._wf_distinct_values`.
+- **Single-file workflow (no join)**: When exactly 1 CSV is loaded, the app skips both the Pre-Join Filters tab and the Define Join tab. Clicking "Next" in Load Files immediately executes `SELECT * FROM "table"` as the join, stores the join config, and jumps to the Post-Join Filters tab. The join SQL is saved in the workflow JSON under `join.sql`, so the Run and Edit paths use the same code path as multi-file workflows without any special handling. The "Next" button label in Load Files dynamically reflects the file count: "Next: Post-Join Filters →" for ≤ 1 file, "Next: Pre-Join Filters →" for 2+ files.
 
 ---
 
 ## Verification
 
-### New workflow path
+### New workflow path — multi-file
 1. Launch app — `WorkflowLauncher` appears (no saved workflows → only "+ New Workflow" shown)
-2. Click "+ New Workflow" → tab 1 enabled
-3. Load two CSVs (set encoding/delimiter/engine; pick a subset of fields); confirm preview shows only the selected `tablename_fieldname` columns
+2. Click "+ New Workflow" → tab 1 enabled; confirm "Next" button shows "Next: Post-Join Filters →" (disabled)
+3. Load two CSVs (set encoding/delimiter/engine; pick a subset of fields); confirm "Next" button changes to "Next: Pre-Join Filters →"; confirm preview shows only the selected `tablename_fieldname` columns
 4. In Pre-Join Filters: enable a `contains` filter on a string field; for a string field with few values (e.g. STATUS), switch to `equals` — confirm a Combobox appears with the known values; select one and confirm the filter applies correctly; enable a date range filter; confirm "Next: Define Join →" proceeds
 5. In Define Join: select master table; define conditions; execute; confirm joined table preview; "Next: Post-Join Filters →" is enabled
 6. In Post-Join Filters: enable a filter on a joined field; confirm "Next: Derived Fields →" proceeds
@@ -402,11 +411,18 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 9. In Reports: for each rule, confirm both "Open HTML Report" and "Open Violation CSV" work; confirm CSV contains all violation rows with correct header
 10. When prompted, save the workflow under a name; confirm `workflows/<name>.json` is created
 
+### New workflow path — single-file
+11. Click "+ New Workflow"; load exactly 1 CSV; confirm "Next" button shows "Next: Post-Join Filters →"
+12. Click "Next" — confirm app jumps directly to tab 4 (Post-Join Filters), skipping tabs 2 and 3; confirm post-join filters show the single table's columns grouped by prefix
+13. Add a filter, proceed through Derived Fields and Define Rules; run rules; confirm reports generated correctly
+14. Save workflow; confirm `join.sql` in the JSON is `SELECT * FROM "<table>"`
+
 ### Run path
-11. Restart app — `WorkflowLauncher` shows saved workflow; click **Run**; confirm progress dialog shows steps; confirm reports match Step 8
+15. Restart app — `WorkflowLauncher` shows saved workflow; click **Run**; confirm progress dialog shows steps; confirm reports match
 
 ### Edit path
-12. Restart app; click **Edit** on the saved workflow; confirm all tabs pre-populated (filters checked, join conditions restored, derived fields shown in Adv mode, rules loaded); modify one rule; run all; save workflow; confirm JSON is overwritten (check `updated_at`)
+16. Restart app; click **Edit** on a multi-file workflow; confirm all tabs pre-populated (filters checked, join conditions restored, derived fields shown in Adv mode, rules loaded); modify one rule; run all; save workflow; confirm JSON is overwritten (check `updated_at`)
+17. Restart app; click **Edit** on a single-file workflow; confirm tabs 2 and 3 (Pre-Join Filters, Define Join) remain disabled; all other tabs pre-populated
 
 ### Large-file test
-13. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution on both Run and New Workflow paths
+18. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution on both Run and New Workflow paths

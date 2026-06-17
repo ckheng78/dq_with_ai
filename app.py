@@ -83,10 +83,19 @@ class App(tk.Tk):
 
     def _on_files_loaded(self, table_names: list[str], distinct_values: dict):
         self._wf_distinct_values = distinct_values
-        self._filter_editor.set_tables(table_names, distinct_values)
-        self._join_editor.set_tables(table_names)
-        self._nb.tab(1, state="normal")
-        self._nb.select(1)
+        if len(table_names) == 1:
+            table = table_names[0]
+            sql = f'SELECT * FROM "{table}"'
+            self._db.execute_join(sql)
+            self._wf_join = {"tables": table_names, "master": table, "sql": sql, "conditions": []}
+            self._postjoin_filter_editor.set_joined_table(table_names, distinct_values)
+            self._nb.tab(3, state="normal")
+            self._nb.select(3)
+        else:
+            self._filter_editor.set_tables(table_names, distinct_values)
+            self._join_editor.set_tables(table_names)
+            self._nb.tab(1, state="normal")
+            self._nb.select(1)
 
     def _on_filters_applied(self, filters: list[dict]):
         self._wf_pre_filters = filters
@@ -316,7 +325,10 @@ class App(tk.Tk):
         self._wf_rules = workflow.get("rules", [])
         self._current_workflow_name = workflow.get("name", "")
 
+        single_file = len(workflow["files"]) == 1
         for i in range(6):
+            if single_file and i == 2:
+                continue
             self._nb.tab(i, state="normal")
         self._nb.select(5)
 

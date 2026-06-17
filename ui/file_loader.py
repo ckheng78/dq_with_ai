@@ -183,7 +183,7 @@ class FileLoaderFrame(ttk.Frame):
 
         ttk.Button(top, text="Add CSV File(s)", command=self._pick_files).pack(side=tk.LEFT)
         ttk.Button(top, text="Remove Selected", command=self._remove_selected).pack(side=tk.LEFT, padx=6)
-        self._next_btn = ttk.Button(top, text="Next: Pre-Join Filters →", command=self._proceed, state=tk.DISABLED)
+        self._next_btn = ttk.Button(top, text="Next: Post-Join Filters →", command=self._proceed, state=tk.DISABLED)
         self._next_btn.pack(side=tk.RIGHT)
 
         list_frame = ttk.LabelFrame(self, text="Loaded Files")
@@ -193,6 +193,14 @@ class FileLoaderFrame(ttk.Frame):
 
         self._preview_nb = ttk.Notebook(self)
         self._preview_nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+    def _update_next_btn(self):
+        has_files = bool(self._loaded_files)
+        multi = len(self._loaded_files) > 1
+        self._next_btn.config(
+            state=tk.NORMAL if has_files else tk.DISABLED,
+            text="Next: Pre-Join Filters →" if multi else "Next: Post-Join Filters →",
+        )
 
     def _pick_files(self):
         paths = filedialog.askopenfilenames(
@@ -252,7 +260,7 @@ class FileLoaderFrame(ttk.Frame):
             except Exception as exc:
                 messagebox.showerror("Load Error", f"Failed to load {path}:\n{exc}")
 
-        self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)
+        self._update_next_btn()
 
     def _remove_selected(self):
         sel = self._file_list.curselection()
@@ -267,7 +275,7 @@ class FileLoaderFrame(ttk.Frame):
             if self._preview_nb.tab(tab_id, "text") == name:
                 self._preview_nb.forget(tab_id)
                 break
-        self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)
+        self._update_next_btn()
 
     def _add_preview_tab(self, table_name: str):
         frame = ttk.Frame(self._preview_nb)
@@ -332,12 +340,9 @@ class FileLoaderFrame(ttk.Frame):
                 f"engine={opts['engine']}, fields={n}/{n}{fmt_tag}]",
             )
             self._add_preview_tab(name)
-        self._next_btn.config(state=tk.NORMAL if self._loaded_files else tk.DISABLED)
+        self._update_next_btn()
 
     def _proceed(self):
-        if len(self._loaded_files) < 2:
-            messagebox.showinfo("Two Tables Required", "Please load at least 2 CSV files to define a join.")
-            return
         merged_distinct: dict = {}
         for cfg in self._loaded_files.values():
             merged_distinct.update(cfg.get("distinct_values", {}))
