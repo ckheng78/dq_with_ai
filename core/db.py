@@ -1,12 +1,22 @@
+import re
+from datetime import datetime
+
 import duckdb
 
 
 _DATE_DETECT_SAMPLE = 200
 _DATE_DETECT_THRESHOLD = 0.8  # 80% of non-empty values must parse as DATE
 
-# All valid date format strings a user can assign to a column.
-_DATE_FORMAT_TYPES = {"Auto", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY",
-                      "DD/MM/YYYY HH:MM:SS", "MM/DD/YYYY HH:MM:SS", "DD-MM-YYYY"}
+# All valid date/time format strings a user can assign to a column.
+_DATE_FORMAT_TYPES = {
+    "Auto", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS",
+    "YYYY/MM/DD", "YYYY/MM/DD HH:MM:SS",
+    "DD/MM/YYYY", "DD/MM/YYYY HH:MM:SS",
+    "DD-MM-YYYY", "DD-MM-YYYY HH:MM:SS",
+    "MM/DD/YYYY", "MM/DD/YYYY HH:MM:SS",
+    "MM-DD-YYYY", "MM-DD-YYYY HH:MM:SS",
+    "TIME",
+}
 
 
 def _type_cast_expr(col: str, col_type: str) -> str:
@@ -40,7 +50,88 @@ def _date_exprs(col: str, fmt: str) -> tuple[str, str]:
         )
     if fmt == "DD-MM-YYYY":
         return f"TRY_STRPTIME({qc}, '%d-%m-%Y') IS NOT NULL", f"TRY_STRPTIME({qc}, '%d-%m-%Y')::DATE"
+    if fmt == "DD-MM-YYYY HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%d-%m-%Y %H:%M:%S') IS NOT NULL OR TRY_STRPTIME({qc}, '%d-%m-%Y') IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%d-%m-%Y %H:%M:%S'), TRY_STRPTIME({qc}, '%d-%m-%Y'))::DATE",
+        )
+    if fmt == "MM-DD-YYYY":
+        return f"TRY_STRPTIME({qc}, '%m-%d-%Y') IS NOT NULL", f"TRY_STRPTIME({qc}, '%m-%d-%Y')::DATE"
+    if fmt == "MM-DD-YYYY HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%m-%d-%Y %H:%M:%S') IS NOT NULL OR TRY_STRPTIME({qc}, '%m-%d-%Y') IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%m-%d-%Y %H:%M:%S'), TRY_STRPTIME({qc}, '%m-%d-%Y'))::DATE",
+        )
+    if fmt == "YYYY/MM/DD":
+        return f"TRY_STRPTIME({qc}, '%Y/%m/%d') IS NOT NULL", f"TRY_STRPTIME({qc}, '%Y/%m/%d')::DATE"
+    if fmt == "YYYY/MM/DD HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%Y/%m/%d %H:%M:%S') IS NOT NULL OR TRY_STRPTIME({qc}, '%Y/%m/%d') IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%Y/%m/%d %H:%M:%S'), TRY_STRPTIME({qc}, '%Y/%m/%d'))::DATE",
+        )
+    if fmt == "YYYY-MM-DD HH:MM:SS":
+        return (
+            f"(TRY_STRPTIME({qc}, '%Y-%m-%d %H:%M:%S') IS NOT NULL OR TRY_CAST({qc} AS DATE) IS NOT NULL)",
+            f"COALESCE(TRY_STRPTIME({qc}, '%Y-%m-%d %H:%M:%S'), TRY_CAST({qc} AS DATE))::DATE",
+        )
+    if fmt == "TIME":
+        return f"TRY_CAST({qc} AS TIME) IS NOT NULL", f"TRY_CAST({qc} AS TIME)"
     return f"TRY_CAST({qc} AS DATE) IS NOT NULL", f"TRY_CAST({qc} AS DATE)"
+
+
+# (display_name, python_strptime_pattern) in detection priority order.
+# Unambiguous formats (year-first) come before DMY, which comes before MDY.
+# DateTime variants precede their Date-only equivalents so specific types win.
+_AUTO_DETECT_FORMATS = [
+    ("YYYY-MM-DD HH:MM:SS", "%Y-%m-%d %H:%M:%S"),
+    ("YYYY/MM/DD HH:MM:SS", "%Y/%m/%d %H:%M:%S"),
+    ("YYYY-MM-DD",          "%Y-%m-%d"),
+    ("YYYY/MM/DD",          "%Y/%m/%d"),
+    ("DD/MM/YYYY HH:MM:SS", "%d/%m/%Y %H:%M:%S"),
+    ("DD-MM-YYYY HH:MM:SS", "%d-%m-%Y %H:%M:%S"),
+    ("MM/DD/YYYY HH:MM:SS", "%m/%d/%Y %H:%M:%S"),
+    ("MM-DD-YYYY HH:MM:SS", "%m-%d-%Y %H:%M:%S"),
+    ("DD/MM/YYYY",          "%d/%m/%Y"),
+    ("DD-MM-YYYY",          "%d-%m-%Y"),
+    ("MM/DD/YYYY",          "%m/%d/%Y"),
+    ("MM-DD-YYYY",          "%m-%d-%Y"),
+    ("TIME",                "%H:%M:%S"),
+]
+_CURRENCY_RE = re.compile(r"^-?\d+\.\d{2}$")
+
+
+def _try_strptime(val: str, fmt: str) -> bool:
+    try:
+        datetime.strptime(val.strip(), fmt)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
+def auto_detect_column_types(samples: dict[str, list[str]]) -> dict[str, str]:
+    """Infer column types from sample values (already non-empty strings).
+
+    Returns {col_name: type_string} where type_string is one of the values in
+    _DATE_FORMAT_TYPES, "CURRENCY", or "VARCHAR".  Integers and non-2-decimal
+    floats default to "VARCHAR" per user rules (numeric codes must not become NUMERIC).
+    """
+    result: dict[str, str] = {}
+    for col, vals in samples.items():
+        if not vals:
+            result[col] = "VARCHAR"
+            continue
+        detected = "VARCHAR"
+        for type_name, fmt in _AUTO_DETECT_FORMATS:
+            hits = sum(1 for v in vals if _try_strptime(v, fmt))
+            if hits / len(vals) >= _DATE_DETECT_THRESHOLD:
+                detected = type_name
+                break
+        if detected == "VARCHAR":
+            hits = sum(1 for v in vals if _CURRENCY_RE.match(v))
+            if hits / len(vals) >= _DATE_DETECT_THRESHOLD:
+                detected = "CURRENCY"
+        result[col] = detected
+    return result
 
 
 def _csv_opts(encoding: str, delimiter: str, engine: str) -> str:

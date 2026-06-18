@@ -86,17 +86,19 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 
 **CSV registration:**
 - `get_csv_sample_values(path, *, encoding, delimiter, engine, n_rows=200, n_distinct=3)` → `(list[str], dict[str, list[str]])` — single `SELECT * LIMIT n_rows` query; returns column names plus up to 3 distinct non-empty sample values per column
-- `detect_date_columns(path, *, encoding, delimiter, engine, date_format="Auto")` → `list[str]` — public helper that runs `_detect_date_columns` against the file and returns names of columns passing the threshold; used to pre-populate the per-column type picker in `FieldSelectorDialog`
+- `detect_date_columns(path, *, encoding, delimiter, engine, date_format="Auto")` → `list[str]` — public helper that runs `_detect_date_columns` against the file and returns names of columns passing the threshold; retained for backward compat but no longer called by the load flow
+- `auto_detect_column_types(samples: dict[str, list[str]]) -> dict[str, str]` — module-level function (not a method); infers column type from the sample values already collected by `get_csv_sample_values`; returns `{col: type_string}` where type is a member of `_DATE_FORMAT_TYPES`, `"CURRENCY"`, or `"VARCHAR"`; uses Python `datetime.strptime` with no extra DB queries; detection priority: unambiguous datetime (YYYY-MM-DD HH:MM:SS / YYYY/MM/DD HH:MM:SS) → unambiguous date → DMY datetime → MDY datetime → DMY date → MDY date → TIME → CURRENCY (exactly 2 decimal places, regex) → VARCHAR; integers and non-2dp floats stay VARCHAR
 - `register_csv(name, path, *, encoding, delimiter, engine, date_format="Auto", selected_columns=None, column_types=None)` → lazy DuckDB view with:
   - Columns filtered to `selected_columns` if provided; otherwise all columns used
   - All columns read as VARCHAR first (`all_varchar=true`) to prevent type misdetection
-  - `column_types` dict maps original column name → type string (`"VARCHAR"`, `"Auto"`, `"YYYY-MM-DD"`, `"DD/MM/YYYY"`, `"MM/DD/YYYY"`, `"DD/MM/YYYY HH:MM:SS"`, `"MM/DD/YYYY HH:MM:SS"`, `"DD-MM-YYYY"`, `"NUMERIC"`, `"CURRENCY"`); columns with an explicit override skip date auto-detection entirely
+  - `column_types` dict maps original column name → type string (`"VARCHAR"`, `"Auto"`, `"YYYY-MM-DD"`, `"YYYY-MM-DD HH:MM:SS"`, `"YYYY/MM/DD"`, `"YYYY/MM/DD HH:MM:SS"`, `"DD/MM/YYYY"`, `"DD/MM/YYYY HH:MM:SS"`, `"DD-MM-YYYY"`, `"DD-MM-YYYY HH:MM:SS"`, `"MM/DD/YYYY"`, `"MM/DD/YYYY HH:MM:SS"`, `"MM-DD-YYYY"`, `"MM-DD-YYYY HH:MM:SS"`, `"TIME"`, `"NUMERIC"`, `"CURRENCY"`); columns with an explicit override skip date auto-detection entirely
   - Columns without any override in `column_types` fall through to `_detect_date_columns` with the file-level `date_format` (backward compat for old workflows where `column_types` is absent)
   - `NUMERIC` → `TRY_CAST(col AS DOUBLE)`; `CURRENCY` → `TRY_CAST(col AS DECIMAL(18,2))`; date formats → `_date_exprs(col, fmt)`; `VARCHAR` → no cast
   - All columns renamed `tablename_fieldname` immediately at view creation — globally unique across tables
   - Base SELECT SQL stored in `_table_base_sql[name]` for filter reapplication
 - `_type_cast_expr(col, type)` → cast SQL fragment for `"numeric"` (DOUBLE) and `"currency"` (DECIMAL(18,2))
-- `_DATE_FORMAT_TYPES` — module-level set of all valid date format strings; used in `register_csv` to detect date overrides
+- `_DATE_FORMAT_TYPES` — module-level set of all valid date/time format strings (14 entries); used in `register_csv` to detect date overrides
+- `_AUTO_DETECT_FORMATS` — module-level list of `(display_name, python_strptime_pattern)` tuples in detection priority order; used by `auto_detect_column_types`
 - `_date_exprs(col, fmt)` → `(detect_condition, cast_expression)` — maps a format name to the DuckDB SQL fragments used for detection and view creation; supports `Auto` / `YYYY-MM-DD` (`TRY_CAST`), `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS` (`COALESCE` of timestamp + date strptime), `DD-MM-YYYY`
 - `_detect_date_columns(con, safe_path, columns, opts, date_format)` → `dict[str, str]` — returns `{col: cast_expression}` for columns that exceed the threshold; previously returned `set[str]`
 
@@ -166,22 +168,22 @@ Each tab is disabled until the preceding step completes. "Next" navigation butto
 ## UI Module Responsibilities
 
 ### `ui/file_loader.py`
-- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, date_format, selected_columns, column_types}` for workflow save
+- `get_file_configs(base_dir)` → list of `{name, path (relative to base_dir), encoding, delimiter, engine, date_format, selected_columns, column_types}` for workflow save; `date_format` is always `"Auto"` for new workflows (backward compat field for old workflows)
 - `populate_from_workflow(file_configs, base_dir)` → updates Listbox and preview tabs without re-registering CSVs (used by the Edit path after DB setup is done in the background thread); reads `date_format` with `"Auto"` fallback and `column_types` with `{}` fallback for old workflows
-- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python), date format (Auto / YYYY-MM-DD / DD/MM/YYYY / MM/DD/YYYY / DD/MM/YYYY HH:MM:SS / MM/DD/YYYY HH:MM:SS / DD-MM-YYYY) — date format here is the detection hint used to pre-populate the per-column type picker
-- `FieldSelectorDialog` — shown after options are confirmed; rebuilt as a scrollable canvas of per-row widgets (replaces single Listbox):
+- `FileOptionsDialog` — modal popup per file: encoding, delimiter (Comma/Tab/Semicolon/Pipe), engine (C/Python) — date format hint removed; type detection is now fully automatic from sample data
+- `FieldSelectorDialog` — shown after options are confirmed; rebuilt as a scrollable canvas of per-row widgets:
   - Each row: checkbox (include/exclude) + column name + sample values label + type dropdown
-  - Type dropdown values: `VARCHAR`, `Auto`, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, `DD/MM/YYYY HH:MM:SS`, `MM/DD/YYYY HH:MM:SS`, `DD-MM-YYYY`, `NUMERIC`, `CURRENCY`; combobox `width=22` to prevent text clipping on Windows (where the dropdown arrow consumes space inside the widget width)
-  - Detected date columns pre-populated with the file-level date format (from `FileOptionsDialog`); all other columns pre-populated with `VARCHAR`
+  - Type dropdown values: `VARCHAR`, `Auto`, `YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, `YYYY/MM/DD`, `YYYY/MM/DD HH:MM:SS`, `DD/MM/YYYY`, `DD/MM/YYYY HH:MM:SS`, `DD-MM-YYYY`, `DD-MM-YYYY HH:MM:SS`, `MM/DD/YYYY`, `MM/DD/YYYY HH:MM:SS`, `MM-DD-YYYY`, `MM-DD-YYYY HH:MM:SS`, `TIME`, `NUMERIC`, `CURRENCY`; combobox `width=22`
+  - Each column pre-populated by `auto_detect_column_types(samples)` result; user can override any column
   - **Select All** / **Clear All** buttons; validates at least 1 field selected
   - `result`: `list[str]` of selected column names; `column_types`: `dict[str, str]` of col → type for selected columns
-  - Accepts `detected_dates: set` and `default_date_format: str` constructor params
-- Load flow: options dialog → `db.detect_date_columns()` + `db.get_csv_sample_values(n_rows=5000, n_distinct=16)` → field/type selector → `db.register_csv(..., column_types=..., selected_columns=...)`
+  - Accepts `detected_types: dict[str, str]` constructor param (replaces old `detected_dates: set` + `default_date_format: str`)
+- Load flow: options dialog → `db.get_csv_sample_values(n_rows=5000, n_distinct=16)` → `auto_detect_column_types(samples)` (pure Python, no extra DB queries) → field/type selector → `db.register_csv(..., column_types=..., selected_columns=...)`
 - After registration, builds `distinct_values` dict (`tablename_fieldname → sorted list`) for every selected column that yielded ≤ 15 distinct values in the 5 000-row sample; stored in `_loaded_files[name]["distinct_values"]`; `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more of the file
 - `FieldSelectorDialog` preview label shows `vals[:3]` even though the sample now collects up to 16 distinct values
 - `_proceed` merges `distinct_values` across all loaded files and passes the merged dict as the second argument to the `on_loaded` callback
 - `_update_next_btn()` — updates "Next" button state and label together; called after every file add/remove and after `populate_from_workflow`; label is `"Next: Post-Join Filters →"` when ≤ 1 file is loaded, `"Next: Pre-Join Filters →"` when 2+ files are loaded; default (disabled, no files) shows `"Next: Post-Join Filters →"`
-- Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`; appends `dfmt=...` when date format is not Auto
+- Loaded files list shows `name  [enc=..., delim=..., engine=..., fields=N/M]`
 - Preview Treeview uses pixel-width columns (`len(col) * 9`) with `stretch=False` + horizontal scrollbar
 
 ### `ui/filter_editor.py`
@@ -387,9 +389,9 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 - **Relative file paths in workflow JSON**: Stored as `os.path.relpath(abs_path, base_dir)` so workflows survive a folder rename or move.
 - **Violation CSV per rule**: Generated alongside the HTML detail report; no row cap (unlike the HTML which has `report_max_detail_rows`). Users can open directly in Excel for full investigation.
 - **Background threads**: Long DuckDB operations run in `threading.Thread`; results posted back via `self.after(0, ...)` to keep Tkinter responsive. Exception variables captured as lambda defaults (`lambda e=exc: ...`) to avoid Python 3 closure scoping bugs.
-- **Per-file load options**: Encoding, delimiter, engine, and date format are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources.
-- **Per-file date format**: The date format in `FileOptionsDialog` is now a detection hint only — it drives `detect_date_columns()` to pre-populate the per-column type picker. The authoritative type for each column is the value stored in `column_types` in the workflow JSON. Old workflows without `column_types` fall through to the original file-level auto-detection path unchanged.
-- **Per-column type selection**: Users set each column's type individually in `FieldSelectorDialog` via a dropdown: `VARCHAR`, any date format, `NUMERIC`, or `CURRENCY`. All fields default to `VARCHAR` or the detected date format; users must explicitly promote a column to `NUMERIC` or `CURRENCY`. This prevents numeric-looking SAP codes (e.g., cost centre, infotype) from being misinterpreted as numbers. `NUMERIC` casts to `DOUBLE`; `CURRENCY` casts to `DECIMAL(18,2)` (no thousands separator or symbol stripping required since source data doesn't use them).
+- **Per-file load options**: Encoding, delimiter, and engine are specified per file at load time via a modal dialog, accommodating mixed-encoding or non-standard CSV sources. The date format hint was removed — type detection is now fully automatic.
+- **Auto-detect column types**: `auto_detect_column_types(samples)` infers each column's type from the sample values already collected by `get_csv_sample_values` — no extra DB queries. Formats tried in priority order: unambiguous datetime (YYYY-MM-DD / YYYY/MM/DD with HH:MM:SS) → unambiguous date → DMY datetime → MDY datetime → DMY date → MDY date → TIME → CURRENCY (exactly 2 decimal places). Integers and floats with ≠ 2 decimal places stay `VARCHAR` — this prevents SAP numeric codes from being misclassified. Users can override any auto-detected type in `FieldSelectorDialog` before loading.
+- **Per-column type selection**: Users can override the auto-detected type per column in `FieldSelectorDialog` via a dropdown covering all 14 date/time formats plus `NUMERIC` and `CURRENCY`. The authoritative type for each column is stored in `column_types` in the workflow JSON. Old workflows without `column_types` fall through to the legacy file-level auto-detection path in `register_csv` unchanged. `NUMERIC` casts to `DOUBLE`; `CURRENCY` casts to `DECIMAL(18,2)` (no thousands separator or symbol stripping required since source data doesn't use them).
 - **Filter operators extended**: `is empty` / `is not empty` (both String and Date) check `IS NULL OR = ''`; no value entry required. `equals` / `not equals` provide exact single-value matching as an alternative to the multi-value `select` operator. `greater than` / `less than` / `between` added for NUMERIC and CURRENCY columns; `between` on a numeric/currency field emits the `between_numeric` operator key so `_build_filter_condition` uses `TRY_CAST(... AS DOUBLE)` comparisons rather than DATE comparisons.
 - **LLM regex function correction**: `_extract_sql` silently replaces `REGEX_LIKE` → `REGEXP_MATCHES` after extraction. `REGEX_LIKE` does not exist in DuckDB; the LLM occasionally hallucinates it from MySQL/Oracle training data. The system prompt was also updated with an explicit DuckDB regex function reference (`REGEXP_MATCHES`, `REGEXP_LIKE`, `REGEXP_EXTRACT`) and a worked example to reduce the hallucination at the source.
 - **Filter dropdown for low-cardinality VARCHAR columns**: When `equals` or `not equals` is selected on a string field with ≤ 15 distinct values, the value input becomes a `state="readonly"` Combobox showing the known values. Values are collected at file-load time from a 5 000-row sample (`get_csv_sample_values(n_rows=5000, n_distinct=16)`); querying `n_distinct=16` (limit+1) lets the caller detect "too many" without reading more. This avoids any additional DB queries when the filter panel opens — critical for 4 GB source files where a full `SELECT DISTINCT` on a CSV view would stream the entire file. Derived columns and the Edit path receive no distinct values and fall back to plain Entry. The same dict is reused for both Pre-Join and Post-Join filter panels, stored in `App._wf_distinct_values`.
@@ -424,5 +426,15 @@ File paths are stored relative to the project root (`base_dir`) so the workflow 
 16. Restart app; click **Edit** on a multi-file workflow; confirm all tabs pre-populated (filters checked, join conditions restored, derived fields shown in Adv mode, rules loaded); modify one rule; run all; save workflow; confirm JSON is overwritten (check `updated_at`)
 17. Restart app; click **Edit** on a single-file workflow; confirm tabs 2 and 3 (Pre-Join Filters, Define Join) remain disabled; all other tabs pre-populated
 
+### Auto-detection verification
+19. Load a CSV with ISO dates (`2024-01-15`) — confirm `YYYY-MM-DD` pre-populated in type dropdown
+20. Load a CSV with DMY slash dates (`15/01/2024`) — confirm `DD/MM/YYYY`; load one where day > 12 to confirm it is unambiguously classified
+21. Load a CSV with ISO datetime (`2024-01-15 09:30:00`) — confirm `YYYY-MM-DD HH:MM:SS`
+22. Load a CSV with a time-only column (`09:30:00`) — confirm `TIME`
+23. Load a CSV with 2-decimal numeric column (`1234.56`) — confirm `CURRENCY`
+24. Load a CSV with SAP employee numbers (`50000001`) — confirm `VARCHAR` (integer, not currency)
+25. Confirm `FileOptionsDialog` no longer shows a date-format dropdown (3 rows only: encoding, delimiter, engine)
+26. Override a detected type in `FieldSelectorDialog` and confirm the override is used at registration
+
 ### Large-file test
-18. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution on both Run and New Workflow paths
+27. Test with a large CSV (≥500MB) and confirm the app remains responsive during execution on both Run and New Workflow paths

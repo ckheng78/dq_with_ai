@@ -2,14 +2,24 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+from core.db import auto_detect_column_types
+
 _ENCODINGS = ["utf-8", "latin-1", "cp1252", "utf-16", "ascii"]
 _DELIMITERS = {"Comma (,)": ",", "Tab (\\t)": "\t", "Semicolon (;)": ";", "Pipe (|)": "|"}
 _ENGINES = ["C", "Python"]
-_DATE_FORMATS = ["Auto", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY", "DD/MM/YYYY HH:MM:SS", "MM/DD/YYYY HH:MM:SS", "DD-MM-YYYY"]
+_DATE_FORMATS = [
+    "Auto", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS",
+    "YYYY/MM/DD", "YYYY/MM/DD HH:MM:SS",
+    "DD/MM/YYYY", "DD/MM/YYYY HH:MM:SS",
+    "DD-MM-YYYY", "DD-MM-YYYY HH:MM:SS",
+    "MM/DD/YYYY", "MM/DD/YYYY HH:MM:SS",
+    "MM-DD-YYYY", "MM-DD-YYYY HH:MM:SS",
+    "TIME",
+]
 
 
 class FileOptionsDialog(tk.Toplevel):
-    """Per-file load options: encoding, delimiter, engine, date format."""
+    """Per-file load options: encoding, delimiter, engine."""
 
     def __init__(self, parent, filename):
         super().__init__(parent)
@@ -39,11 +49,6 @@ class FileOptionsDialog(tk.Toplevel):
         ttk.Combobox(grid, textvariable=self._engine_var, values=_ENGINES,
                      state="readonly", width=22).grid(row=2, column=1, padx=8)
 
-        ttk.Label(grid, text="Date format:").grid(row=3, column=0, sticky=tk.W, pady=4)
-        self._datefmt_var = tk.StringVar(value="Auto")
-        ttk.Combobox(grid, textvariable=self._datefmt_var, values=_DATE_FORMATS,
-                     state="readonly", width=22).grid(row=3, column=1, padx=8)
-
         btn_row = ttk.Frame(self)
         btn_row.pack(pady=12)
         ttk.Button(btn_row, text="Load", command=self._ok).pack(side=tk.LEFT, padx=6)
@@ -54,10 +59,9 @@ class FileOptionsDialog(tk.Toplevel):
 
     def _ok(self):
         self.result = {
-            "encoding":    self._enc_var.get(),
-            "delimiter":   _DELIMITERS[self._delim_var.get()],
-            "engine":      self._engine_var.get(),
-            "date_format": self._datefmt_var.get(),
+            "encoding":  self._enc_var.get(),
+            "delimiter": _DELIMITERS[self._delim_var.get()],
+            "engine":    self._engine_var.get(),
         }
         self.destroy()
 
@@ -73,7 +77,7 @@ class FieldSelectorDialog(tk.Toplevel):
     """
 
     def __init__(self, parent, filename, columns, samples: dict,
-                 detected_dates: set = None, default_date_format: str = "Auto"):
+                 detected_types: dict = None):
         super().__init__(parent)
         self.title(f"Select Fields — {filename}")
         self.resizable(True, True)
@@ -81,7 +85,6 @@ class FieldSelectorDialog(tk.Toplevel):
         self.result = None
         self.column_types = {}
         self._columns = columns
-        detected_dates = detected_dates or set()
 
         ttk.Label(self, text="Choose fields to load  (at least 1 required):",
                   font=("TkDefaultFont", 10, "bold")).pack(padx=14, pady=(12, 2))
@@ -114,9 +117,10 @@ class FieldSelectorDialog(tk.Toplevel):
         col_width = max((len(c) for c in columns), default=20)
         self._check_vars: list[tk.BooleanVar] = []
         self._type_vars: list[tk.StringVar] = []
+        _detected = detected_types or {}
 
         for col in columns:
-            default_type = default_date_format if col in detected_dates else "VARCHAR"
+            default_type = _detected.get(col, "VARCHAR")
             chk_var = tk.BooleanVar(value=True)
             type_var = tk.StringVar(value=default_type)
             self._check_vars.append(chk_var)
@@ -226,10 +230,9 @@ class FileLoaderFrame(ttk.Frame):
                 messagebox.showerror("Read Error", f"Could not read columns from {os.path.basename(path)}:\n{exc}")
                 continue
 
-            detected_dates = set(self.db.detect_date_columns(path, date_format=opts["date_format"], **csv_opts))
+            detected_types = auto_detect_column_types(samples)
             dlg2 = FieldSelectorDialog(self, os.path.basename(path), all_cols, samples,
-                                       detected_dates=detected_dates,
-                                       default_date_format=opts["date_format"])
+                                       detected_types=detected_types)
             if dlg2.result is None:
                 continue  # user cancelled field selection
 
@@ -237,8 +240,7 @@ class FileLoaderFrame(ttk.Frame):
             col_types = dlg2.column_types
             try:
                 self.db.register_csv(safe_name, path, selected_columns=selected_cols,
-                                     date_format=opts["date_format"], column_types=col_types,
-                                     **csv_opts)
+                                     column_types=col_types, **csv_opts)
                 # Build distinct-value hints for filter dropdowns (only cols with ≤15 distinct values
                 # from the 5000-row sample; len==16 means "more than 15", so skip those).
                 distinct_values = {
@@ -250,11 +252,10 @@ class FileLoaderFrame(ttk.Frame):
                                                  "column_types": col_types,
                                                  "distinct_values": distinct_values, **opts}
                 delim_display = next(k for k, v in _DELIMITERS.items() if v == opts["delimiter"])
-                fmt_tag = f", dfmt={opts['date_format']}" if opts["date_format"] != "Auto" else ""
                 self._file_list.insert(
                     tk.END,
                     f"{safe_name}  [enc={opts['encoding']}, delim={delim_display}, "
-                    f"engine={opts['engine']}, fields={len(selected_cols)}/{len(all_cols)}{fmt_tag}]"
+                    f"engine={opts['engine']}, fields={len(selected_cols)}/{len(all_cols)}]"
                 )
                 self._add_preview_tab(safe_name)
             except Exception as exc:
